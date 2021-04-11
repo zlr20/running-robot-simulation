@@ -1,0 +1,3 @@
+Team name:Default Name
+请在第一行输入您的队名，然后保存并关闭
+Please enter your team name in the first line, then save and close this window

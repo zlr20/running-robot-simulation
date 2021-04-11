@@ -1,0 +1,1390 @@
+#VRML_SIM R2021a utf8
+WorldInfo {
+  basicTimeStep 8
+  coordinateSystem "NUE"
+}
+Viewpoint {
+  orientation -0.10081458141814076 -0.9178420349972856 -0.383930226689078 2.6883099428905397
+  position -3.3538019535507875 8.144562638381677 -7.11519533119769
+  follow "DARwIn-OP"
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+Floor {
+  tileSize 1 1
+}
+DEF Barrier Robot {
+  translation -2 0.25 -1.6500000000000001
+  children [
+    Transform {
+      translation 0.588953 0.250003 7.6832e-05
+      rotation 0.14399771563708808 -0.9895780188154123 5.0681985621348424e-05 -0.0005176084045650383
+      children [
+        DEF wheel Solid {
+          translation -6.648272976583769e-07 0.08851316632015427 -0.020000110786033254
+          rotation 0.12025652344600177 -0.002367190059747303 0.9927400288997629 8.090662341191173e-06
+          children [
+            DEF wheel_shape Shape {
+              appearance Appearance {
+                texture ImageTexture {
+                  url [
+                    "textures/asphalt.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.09 0.4 0.04
+              }
+            }
+            HingeJoint {
+              jointParameters HingeJointParameters {
+                position -1.5699999802889233
+                axis 0 0 1
+                anchor 0 0.15 0
+              }
+              device [
+                RotationalMotor {
+                  name "wheel1"
+                }
+              ]
+              endPoint Solid {
+                translation -0.0004411654239377394 0.6500003777870588 0.028000001136355434
+                rotation 0.5776576251517371 -0.5771980139025887 -0.5771950457609302 2.093938587819949
+                children [
+                  DEF sensor0 TouchSensor {
+                    children [
+                      Shape {
+                        appearance Appearance {
+                          texture ImageTexture {
+                            url [
+                              "textures/warning2.png"
+                            ]
+                          }
+                        }
+                        geometry Box {
+                          size 0.9005 0.0025 0.0605
+                        }
+                      }
+                    ]
+                    name "t_sensor1"
+                    boundingObject Box {
+                      size 0.9005 0.0025 0.0605
+                    }
+                  }
+                  Shape {
+                    geometry Box {
+                      size 0.9 0.002 0.06
+                    }
+                  }
+                ]
+                boundingObject Box {
+                  size 0.9 0.002 0.06
+                }
+                physics Physics {
+                }
+              }
+            }
+          ]
+          boundingObject USE wheel_shape
+          physics Physics {
+          }
+        }
+        Shape {
+          appearance Appearance {
+            texture ImageTexture {
+              url [
+                "textures/asphalt.jpg"
+              ]
+            }
+          }
+          geometry Box {
+            size 0.3 0.3 0.3
+          }
+        }
+        DEF base2 Solid {
+          translation 2.212621197372755e-10 -0.10488184739784995 -0.2000003638656478
+          children [
+            Shape {
+              appearance Appearance {
+                texture ImageTexture {
+                  url [
+                    "textures/asphalt.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.5 0.1 0.1
+              }
+            }
+          ]
+          name "solid(2)"
+          boundingObject Box {
+            size 0.5 0.1 0.1
+          }
+          physics Physics {
+          }
+        }
+        DEF base1 Solid {
+          translation -0.19999999986723838 -0.10292910628743368 1.1774807706643742e-06
+          rotation 1.3178966809639414e-17 1 1.3502383597633103e-17 1.5707999999999993
+          children [
+            Shape {
+              appearance Appearance {
+                texture ImageTexture {
+                  url [
+                    "textures/asphalt.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.3 0.1 0.1
+              }
+            }
+          ]
+          name "solid(4)"
+          boundingObject Box {
+            size 0.3 0.1 0.1
+          }
+          physics Physics {
+          }
+        }
+        DEF base1 Solid {
+          translation 0.20000000013275687 -0.10292910628743235 -2.9178332905388515e-07
+          rotation 1.3178966809639414e-17 1 1.3502383597633103e-17 1.5707999999999993
+          children [
+            Shape {
+              appearance Appearance {
+                texture ImageTexture {
+                  url [
+                    "textures/asphalt.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.3 0.1 0.1
+              }
+            }
+          ]
+          name "solid(3)"
+          boundingObject Box {
+            size 0.3 0.1 0.1
+          }
+          physics Physics {
+          }
+        }
+        DEF base1 Solid {
+          translation 2.2125634657754745e-10 -0.10488184739785017 0.19999963613434724
+          children [
+            Shape {
+              appearance Appearance {
+                texture ImageTexture {
+                  url [
+                    "textures/asphalt.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.5 0.1 0.1
+              }
+            }
+          ]
+          name "solid(1)"
+          boundingObject Box {
+            size 0.5 0.1 0.1
+          }
+          physics Physics {
+          }
+        }
+        DEF BottomStage SolidBox {
+          translation 0 -0.3 0
+          name "box(13)"
+          size 0.6 0.4 0.6
+          appearance PBRAppearance {
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+  ]
+  name "robot(7)"
+  boundingObject Box {
+    size 0.3 0.3 0.3
+  }
+  controller "barrier"
+  customData "0"
+}
+DEF ball Robot {
+  translation -2.000006698277734 0.5196075999999998 0.09996650763634328
+  rotation 0.9805643500549944 0.006286383999359749 -0.196097008588705 -0.0022701341384147805
+  children [
+    DEF qiu Shape {
+      appearance PBRAppearance {
+        baseColor 0.22 0.64 0.85
+      }
+      geometry Sphere {
+        radius 0.02
+      }
+    }
+  ]
+  name "robot(6)"
+  boundingObject Sphere {
+    radius 0.02
+  }
+  physics Physics {
+    density -1
+    mass 1
+  }
+}
+DEF mine Robot {
+  translation 2.4499999999999997 0.250133 1
+  rotation 0 1 0 -3.1415853071795863
+  children [
+    DEF mine0 Solid {
+      translation -0.23999999999999977 0.26599988943367 -0.25
+      rotation 0.834999955336095 0.003538659396682554 -0.5502386323027434 -4.599611363024555e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.9320142362898594e-05 0.019850263864519824 5.3949900600258616e-06
+          rotation -0.10780277997046354 0.01446709746429988 0.9940670318049977 -4.661287287376348e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor0"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(1)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+    DEF mine1 Solid {
+      translation 0.14000000000000012 0.26599988943367 0.19999999999999996
+      rotation 0.8702297919427118 5.383166993148474e-08 -0.49264602831580984 -4.743743076294313e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.932014229228841e-05 0.019850263864518713 5.39498995144605e-06
+          rotation -0.10780277997054527 0.014467097398200356 0.9940670318059507 -4.6612872873711475e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor1"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(9)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+    DEF mine2 Solid {
+      translation 0.2100000000000004 0.26599988943367 -0.30000000000000004
+      rotation 0.9096077995925327 6.525482980449564e-09 -0.4154679902476619 -3.9147380536420525e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.9320142020061724e-05 0.019850263864516604 5.3949901646088705e-06
+          rotation -0.10780277997037643 0.01446709750731542 0.9940670318043813 -4.661287287378258e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor2"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(10)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+    DEF mine3 Solid {
+      translation -0.2799999999999998 0.26599988943367 0.2599999999999999
+      rotation 0.8877267810062497 -2.6128755261408896e-08 -0.4603706792186936 -5.353260439930168e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.932014233758551e-05 0.01985026386451827 5.3949897138583225e-06
+          rotation -0.10780277997050272 0.014467097426995906 0.9940670318055363 -4.6612872873726925e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor3"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(11)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+    DEF mine4 Solid {
+      translation 4.440892098500626e-16 0.26599988943367 -0.07000000000000006
+      rotation 0.7495871459435227 5.0858845411370755e-08 -0.6619056659647515 -4.584406596043266e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.9320142559186024e-05 0.01985026386451727 5.3949902174554865e-06
+          rotation -0.10780277997047377 0.014467097439910192 0.9940670318053516 -4.6612872873743886e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor4"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(12)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+    DEF mine5 Solid {
+      translation -0.029999999999999805 0.26599988943367 0.44999999999999996
+      rotation 0.6414539858798937 -3.1699802858886393e-06 -0.7671615110188652 -4.5414327767233636e-07
+      children [
+        DEF mine_0 TouchSensor {
+          translation -2.9320142727495835e-05 0.01985026386451738 5.394990414742118e-06
+          rotation -0.10780277997038298 0.014467097500561936 0.9940670318044786 -4.661287287377993e-05
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.05
+                radius 0.01
+              }
+            }
+          ]
+          name "minesensor5"
+          boundingObject Cylinder {
+            height 0.05
+            radius 0.01
+          }
+          physics Physics {
+          }
+        }
+        DEF dilei0 Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Cylinder {
+            height 0.049
+            radius 0.009
+          }
+        }
+      ]
+      name "solid(13)"
+      boundingObject Cylinder {
+        height 0.049
+        radius 0.009
+      }
+      physics Physics {
+      }
+    }
+  ]
+  name "robot(3)"
+  controller "mine0"
+  customData "0"
+}
+DEF door Robot {
+  translation -1.4 0.25 1.6
+  rotation 0 1 0 1.5708
+  children [
+    DEF door1 TouchSensor {
+      translation -0.185 0.55 0
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Box {
+            size 0.031 0.58 0.031
+          }
+        }
+      ]
+      name "doorsensor1"
+      boundingObject Box {
+        size 0.031 0.58 0.031
+      }
+    }
+    Transform {
+      translation -0.185 0.54 0
+      children [
+        DEF 挡板 Shape {
+          appearance PBRAppearance {
+            baseColor 0.49 0.34 0.14
+          }
+          geometry Box {
+            size 0.03 0.62 0.03
+          }
+        }
+      ]
+    }
+    DEF door1 TouchSensor {
+      translation 0.185 0.55 0
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Box {
+            size 0.031 0.58 0.031
+          }
+        }
+      ]
+      name "doorsensor2"
+      boundingObject Box {
+        size 0.031 0.58 0.031
+      }
+    }
+    Transform {
+      translation 0.185 0.55 0
+      children [
+        DEF 挡板 Shape {
+          appearance PBRAppearance {
+            baseColor 0.49 0.34 0.14
+          }
+          geometry Box {
+            size 0.03 0.6 0.03
+          }
+        }
+      ]
+    }
+    DEF door1 TouchSensor {
+      translation 0 0.865 0
+      rotation 0 1 0 1.5708
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0 0 0
+          }
+          geometry Box {
+            size 0.031 0.03 0.4
+          }
+        }
+      ]
+      name "doorsensor3"
+      boundingObject Box {
+        size 0.031 0.031 0.29
+      }
+    }
+    Transform {
+      translation 0 0.865 0
+      rotation 0 1 0 1.5708
+      children [
+        DEF 挡板 Shape {
+          appearance PBRAppearance {
+            baseColor 0.49 0.34 0.14
+          }
+          geometry Box {
+            size 0.03 0.03 0.36
+          }
+        }
+      ]
+    }
+  ]
+  name "robot(2)"
+  controller "door1"
+  customData "0"
+}
+DEF Step Solid {
+  translation 0.5249999999999999 0.25 1.6
+  rotation 0 1 0 1.5708
+  children [
+    Transform {
+      translation 0 0 0.59925
+      children [
+        DEF six SolidBox {
+          translation 0 0 0.18
+          name "box(1)"
+          size 0.6 0.5 0.5
+          appearance PBRAppearance {
+            baseColorMap ImageTexture {
+              url [
+                "textures/brick4.jpg"
+              ]
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 -0.625
+      children [
+        DEF six SolidBox {
+          name "box(6)"
+          size 0.6 0.5 0.8
+          appearance PBRAppearance {
+            baseColorMap ImageTexture {
+              url [
+                "textures/brick4.jpg"
+              ]
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0.2075 0.67425
+      children [
+        DEF slope Solid {
+          rotation -1 0 0 -0.05
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  diffuseColor 0.89 0.05 0.02
+                }
+              }
+              geometry Box {
+                size 0.4 0.1 0.3
+              }
+            }
+          ]
+          name "solid(10)"
+          boundingObject Box {
+            size 0.4 0.1 0.3
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 0.45
+      children [
+        DEF FifthStep SolidBox {
+          name "box(11)"
+          size 0.4 0.53 0.15
+          appearance PBRAppearance {
+            baseColor 0.2 0.43 0.7
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 0.3
+      children [
+        DEF FourthStep SolidBox {
+          name "box(10)"
+          size 0.4 0.56 0.15
+          appearance PBRAppearance {
+            baseColor 0.39 0.69 0.43
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 -0.15
+      children [
+        DEF FirstStep SolidBox {
+          name "box(8)"
+          size 0.4 0.53 0.15
+          appearance PBRAppearance {
+            baseColor 0.2 0.43 0.7
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      children [
+        DEF SecondStep SolidBox {
+          name "box(2)"
+          size 0.4 0.56 0.15
+          appearance PBRAppearance {
+            baseColor 0.39 0.69 0.43
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 0.15
+      children [
+        DEF ThirdStep SolidBox {
+          name "box(7)"
+          size 0.4 0.59 0.15
+          appearance PBRAppearance {
+            baseColor 0.89 0.05 0.02
+            baseColorMap ImageTexture {
+            }
+            roughness 0.5
+            metalness 0
+          }
+        }
+      ]
+    }
+  ]
+  name "solid(11)"
+}
+DEF Reset_Ruler Robot {
+  name "robot(4)"
+  controller "Rst_Ruler_random"
+  supervisor TRUE
+}
+DEF obscle Solid {
+  translation -0.7999858731494143 0.549897559999997 1.5999998357087546
+  rotation 1.3340491552689055e-09 1 1.334044129399389e-09 1.5707999307902123
+  children [
+    Transform {
+      translation 0 0.04 0
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.8
+                  diffuseColor 0 0 0.5
+                }
+              }
+              geometry Box {
+                size 0.6 0.025 0.041
+              }
+            }
+          ]
+          name "solid(1)"
+        }
+      ]
+    }
+    Transform {
+      translation 0 -0.04 0
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.7
+                  diffuseColor 0 0 0.5
+                }
+              }
+              geometry Box {
+                size 0.6 0.025 0.041
+              }
+            }
+          ]
+        }
+      ]
+    }
+    Shape {
+      appearance Appearance {
+        material Material {
+          ambientIntensity 0.6
+          diffuseColor 1 1 1
+        }
+      }
+      geometry Box {
+        size 0.6 0.05 0.04
+      }
+    }
+  ]
+  name "solid(9)"
+  boundingObject Box {
+    size 0.6 0.1 0.04
+  }
+  physics Physics {
+  }
+}
+DEF Darwin Darwin-op {
+  hidden position_0_0 -3.8293750971902655e-09
+  hidden position_0_1 -1.4167669854921078e-07
+  hidden position_0_2 1.4154051733183924e-07
+  hidden position_0_3 0.7218681124587499
+  hidden position_0_4 -0.8447392799445166
+  hidden position_10_0 0.17355551147664883
+  hidden rotation_11 1 0 0 0.6118444885233328
+  hidden rotation_15 0 1 0 1.4292691717483762e-07
+  hidden position_15_0 -0.006144175533461104
+  hidden rotation_16 0 0 1 0.006144175533464529
+  hidden position_16_0 0.6312505342307648
+  hidden rotation_17 -1 0 0 0.6312505342307648
+  hidden position_17_0 -0.9292138138297809
+  hidden rotation_18 0.9999999999999999 0 0 0.9292138138297806
+  hidden position_18_0 -0.5237384222779594
+  hidden rotation_19 -1 0 0 0.5237384222779591
+  hidden position_19_0 -0.013822387165122293
+  hidden rotation_20 0 0 -1 0.013822387165127464
+  hidden rotation_21 0 -1 0 1.4292691717483762e-07
+  hidden position_21_0 0.006144175136481023
+  hidden rotation_22 0 0 -1 0.006144175136512677
+  hidden position_22_0 -0.6312501143921482
+  hidden rotation_23 -1 0 0 0.6312501143921481
+  hidden position_23_0 0.9292138133427058
+  hidden rotation_24 1 0 0 0.9292138133427058
+  hidden position_24_0 0.523738422341917
+  hidden rotation_25 -0.9999999999999999 0 0 0.523738422341917
+  hidden position_25_0 0.013822387560638928
+  hidden rotation_26 0 0 1 0.013822387560629453
+  hidden rotation_27 1 0 0 0.72186811245875
+  hidden position_27_0 0.30717798494937115
+  hidden rotation_28 0 0 1 0.4782220150506217
+  hidden position_28_0 -0.5160589343140978
+  hidden rotation_29 -1 0 0 2.086858934314096
+  hidden rotation_30 0.9999999999999999 0 0 0.8447392799445167
+  hidden position_30_0 -0.31178562183287134
+  hidden rotation_31 0 0 -1 0.4736143781671062
+  hidden position_31_0 0.5114512670372797
+  hidden rotation_32 -1 0 0 2.0822512670372775
+  translation -2.000000652203251 0.8174995326413738 -1.9262685186935666
+  rotation -0.999999998974883 -4.4051668937439284e-05 1.0473033056735308e-05 -0.22579967030103767
+  controller "thu_walk"
+}
+DEF Trap Solid {
+  translation -2 0.45 -0.9
+  children [
+    Transform {
+      translation -0.2 0 0
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  diffuseColor 0.39 0.69 0.43
+                }
+              }
+              geometry Box {
+                size 0.2 0.1 0.8
+              }
+            }
+          ]
+          boundingObject Box {
+            size 0.2 0.1 0.8
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 0.25
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  diffuseColor 0.39 0.69 0.43
+                }
+              }
+              geometry Box {
+                size 0.2 0.1 0.3
+              }
+            }
+          ]
+          name "solid(1)"
+          boundingObject Box {
+            size 0.2 0.1 0.3
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0 0 -0.25
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  diffuseColor 0.39 0.69 0.43
+                }
+              }
+              geometry Box {
+                size 0.2 0.1 0.3
+              }
+            }
+          ]
+          name "solid(2)"
+          boundingObject Box {
+            size 0.2 0.1 0.3
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0.2 0 0
+      children [
+        Solid {
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  diffuseColor 0.39 0.69 0.43
+                }
+              }
+              geometry Box {
+                size 0.2 0.1 0.8
+              }
+            }
+          ]
+          name "solid(3)"
+          boundingObject Box {
+            size 0.2 0.1 0.8
+          }
+        }
+      ]
+    }
+  ]
+  name "solid(1)"
+}
+DEF bridge_2 SolidBox {
+  translation 1.8499999999999999 0.48 1.6
+  rotation 0 1 0 1.5708
+  name "box(4)"
+  size 0.3 0.04 0.6
+  appearance PBRAppearance {
+    baseColor 0.39 0.69 0.43
+    baseColorMap ImageTexture {
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF StartingField SolidBox {
+  translation -2 0.25 -1.8
+  size 0.6 0.5 1
+  appearance PBRAppearance {
+    baseColorMap ImageTexture {
+      url [
+        "textures/grass.jpg"
+      ]
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF second SolidBox {
+  translation -1.4000000000000001 0.250133 1.6
+  rotation 0 1 0 1.5708
+  name "box(1)"
+  size 0.6 0.5 1.8
+  appearance PBRAppearance {
+    baseColor 0.7 0.7 0.65
+    baseColorMap ImageTexture {
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF hole Solid {
+  translation -1.8 0.2505 0.30000000000000004
+  children [
+    DEF hole Transform {
+      children [
+        DEF DONG Solid {
+          children [
+            DEF qiu Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0
+              }
+              geometry Cylinder {
+                height 0.501
+                radius 0.05
+              }
+            }
+          ]
+          boundingObject Cylinder {
+            height 0.501
+            radius 0.05
+          }
+        }
+      ]
+    }
+    DEF ring Transform {
+      children [
+        Solid {
+          children [
+            DEF qiu Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 1
+              }
+              geometry Cylinder {
+                height 0.5
+                radius 0.06
+              }
+            }
+          ]
+          name "solid(1)"
+          boundingObject Cylinder {
+            height 0.501
+            radius 0.06
+          }
+        }
+      ]
+    }
+  ]
+}
+DEF EndingField SolidBox {
+  translation 2.4499999999999997 0.25 -0.4999999999999999
+  rotation 0 1 0 -3.1415853071795863
+  name "box(12)"
+  size 0.6 0.5 1.2
+  appearance PBRAppearance {
+    baseColorMap ImageTexture {
+      url [
+        "textures/carpet7-n3.jpg"
+      ]
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF third SolidBox {
+  translation 2.4499999999999997 0.25 1
+  rotation 0 1 0 -3.1415853071795863
+  name "box(3)"
+  size 0.6 0.5 1.8
+  appearance PBRAppearance {
+    baseColorMap ImageTexture {
+      url [
+        "textures/tile_n3.jpg"
+      ]
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF forth SolidBox {
+  translation -2 0.25 0.4
+  name "box(5)"
+  size 0.6 0.5 1.8
+  appearance PBRAppearance {
+    baseColorMap ImageTexture {
+      url [
+        "textures/brick4.jpg"
+      ]
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+DEF LOGO Solid {
+  translation 0.3 0 -0.3
+  rotation 0 1 0 3.14159
+  scale 2 2 2
+  children [
+    DEF logo Shape {
+      appearance Appearance {
+        texture ImageTexture {
+          url [
+            "textures/logo.png"
+          ]
+        }
+      }
+      geometry Box {
+        size 1 0.01 1
+      }
+    }
+  ]
+  name "solid_logo"
+  boundingObject USE logo
+}
+DEF WALL Solid {
+  translation 0 0.5 0
+  children [
+    DEF four_walls Group {
+      children [
+        DEF up Transform {
+          translation 0.3 0 3.35
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.7
+                  diffuseColor 1 1 1
+                }
+                texture ImageTexture {
+                  url [
+                    "textures/wall_up.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 6 1 0.1
+              }
+            }
+          ]
+        }
+        DEF left Transform {
+          translation -2.75 0 0.3
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.7
+                  diffuseColor 1 1 1
+                }
+                texture ImageTexture {
+                  url [
+                    "textures/wall_left.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.1 1 6
+              }
+            }
+          ]
+        }
+        DEF down Transform {
+          translation 0.3 0 -2.75
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.7
+                  diffuseColor 1 1 1
+                }
+                texture ImageTexture {
+                  url [
+                    "textures/wall_down.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 6 1 0.1
+              }
+            }
+          ]
+        }
+        DEF right Transform {
+          translation 3.35 0 0.3
+          children [
+            Shape {
+              appearance Appearance {
+                material Material {
+                  ambientIntensity 0.7
+                  diffuseColor 1 1 1
+                }
+                texture ImageTexture {
+                  url [
+                    "textures/wall_right.jpg"
+                  ]
+                }
+              }
+              geometry Box {
+                size 0.1 1 6
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+  name "solid_wall"
+  boundingObject USE four_walls
+}
+DEF double_barrier Robot {
+  translation 2.4499999999999997 0.25 -0.21999999999999997
+  rotation 0 1 0 -3.1415853071795863
+  children [
+    Transform {
+      translation -0.3 0.25 0
+      rotation 0 1 0 3.14159
+      children [
+        DEF wheel Solid {
+          translation 9.821843915958084e-08 0.08912087493260201 -0.020000090877286103
+          rotation -0.7693075684557151 -0.009306376048420911 0.6388108143117184 2.735669833597381e-06
+          children [
+            DEF wheel_shape Shape {
+              appearance PBRAppearance {
+              }
+              geometry Box {
+                size 0.05 0.2 0.05
+              }
+            }
+            HingeJoint {
+              jointParameters HingeJointParameters {
+                position -1.5699999834288723
+                axis 0 1 0
+                anchor 0 0.15 0
+              }
+              device [
+                RotationalMotor {
+                  name "wheel1"
+                }
+              ]
+              endPoint Solid {
+                translation -1.4863350627592007e-09 0.12999972136461235 -0.1200000180608906
+                rotation 0.5776577587122684 -0.5771949644462965 0.5771979615498977 2.0939383263896567
+                children [
+                  DEF sensor0 TouchSensor {
+                    children [
+                      Shape {
+                        appearance Appearance {
+                          texture ImageTexture {
+                            url [
+                              "textures/warning2.png"
+                            ]
+                          }
+                        }
+                        geometry Box {
+                          size 0.25 0.01 0.07
+                        }
+                      }
+                    ]
+                    name "t_sensor1"
+                    boundingObject Box {
+                      size 0.25 0.01 0.07
+                    }
+                  }
+                  Shape {
+                    appearance Appearance {
+                      texture ImageTexture {
+                        url [
+                          "textures/warning3.jpg"
+                        ]
+                      }
+                      textureTransform TextureTransform {
+                      }
+                    }
+                    geometry Box {
+                      size 0.25 0.01 0.07
+                    }
+                  }
+                ]
+                boundingObject Box {
+                  size 0.25 0.01 0.07
+                }
+                physics Physics {
+                  density 200
+                }
+              }
+            }
+          ]
+          boundingObject USE wheel_shape
+          physics Physics {
+          }
+        }
+      ]
+    }
+    Transform {
+      translation 0.3 0.25 0
+      rotation 0 1 0 3.14159
+      children [
+        DEF wheel Solid {
+          translation -2.4626924810533524e-07 0.08903579280291052 -0.02000039951807514
+          rotation -0.7232582236857928 0.006590341821805277 -0.6905462397736618 9.961912217071842e-06
+          children [
+            DEF wheel_shape Shape {
+              appearance PBRAppearance {
+              }
+              geometry Box {
+                size 0.05 0.2 0.05
+              }
+            }
+            HingeJoint {
+              jointParameters HingeJointParameters {
+                position -1.5699999834276028
+                axis 0 -1 0
+                anchor 0 0.15 0
+              }
+              device [
+                RotationalMotor {
+                  name "wheel2"
+                }
+              ]
+              endPoint Solid {
+                translation -3.793839229180923e-10 0.12999860682307796 -0.1200000154426784
+                rotation 0.5776577482058058 0.5771949533899599 -0.5771979831210085 2.0939382952158114
+                children [
+                  DEF sensor0 TouchSensor {
+                    children [
+                      Shape {
+                        appearance Appearance {
+                          texture ImageTexture {
+                            url [
+                              "textures/warning2.png"
+                            ]
+                          }
+                        }
+                        geometry Box {
+                          size 0.25 0.01 0.07
+                        }
+                      }
+                    ]
+                    name "t_sensor2"
+                    boundingObject Box {
+                      size 0.25 0.01 0.07
+                    }
+                  }
+                  Shape {
+                    appearance Appearance {
+                      texture ImageTexture {
+                        url [
+                          "textures/warning3.jpg"
+                        ]
+                      }
+                      textureTransform TextureTransform {
+                      }
+                    }
+                    geometry Box {
+                      size 0.25 0.01 0.07
+                    }
+                  }
+                ]
+                boundingObject Box {
+                  size 0.25 0.05 0.07
+                }
+                physics Physics {
+                  density 200
+                }
+              }
+            }
+          ]
+          name "solid(1)"
+          boundingObject USE wheel_shape
+          physics Physics {
+          }
+        }
+      ]
+    }
+  ]
+  name "robot(5)"
+  controller "double_barrier"
+  customData "0"
+}
