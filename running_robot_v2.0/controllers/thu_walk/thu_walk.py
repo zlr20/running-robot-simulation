@@ -70,13 +70,15 @@ class Walk():
 		self.angle = np.array([0.,0.,0.]) # 角度
 		self.velocity = np.array([0.,0.,0.]) # 速度
 
-		# 关卡一的预训练模型
+		# 关卡1-7的预训练模型
 		self.model1 = load_model('./pretrain/1.pth')
 
-		
+		self.model7 = load_model('./pretrain/7.pth')
 
+		
 	def myStep(self):
 		ret = self.robot.step(self.mTimeStep)
+		self.angle = updateAngle(self.angle,self.mTimeStep,self.mGyro)
 		if ret == -1:
 			exit(0)
 
@@ -88,7 +90,7 @@ class Walk():
 	
 	def run(self):
 		print('########Thu-bot Simulation########')
-		self.myStep()  # 仿真一个步长，刷新传感器读数
+		self.robot.step(self.mTimeStep)  # 仿真一个步长，刷新传感器读数
 
 		
 		# 准备动作，保持机器人稳定
@@ -99,18 +101,51 @@ class Walk():
 		self.wait(500)  # 等待2s
 		print('Ready to Play!')
 		# 开始运动
+		self.mGaitManager.setBalanceEnable(True)
 		self.mGaitManager.start()
 
 		# 通过第一关
 		self.stage1()
+		# 通过第七关
+		#self.stage7()
 
+		# 键盘控制与采集数据
+		#self.keyBoardControl()
+		
 		# 停下
 		self.mGaitManager.stop()
+		self.wait(200)
+		self.mMotionManager.playPage(24)
 		while True:
 			self.mGaitManager.step(self.mTimeStep)
 			self.myStep()
 
 			
+	def checkIfYaw(self, threshold=7.5):
+		if self.angle[-1] > threshold:
+			print('Yaw Anticlockwise %.3f°, Start Correction Program...'%self.angle[-1])
+			while np.abs(self.angle[-1]) > 0.25:
+				self.mGaitManager.setAAmplitude(-0.25)
+				self.mGaitManager.step(self.mTimeStep)
+				self.myStep()
+			print('Yaw Anticlockwise %.3f°, Finish Correction Program!'%self.angle[-1])
+			self.mGaitManager.setAAmplitude(0.0)
+			self.mGaitManager.step(self.mTimeStep)
+			self.myStep()
+		elif self.angle[-1] < -threshold:
+			print('Yaw Clockwise %.3f°, Start Correction Program...'%self.angle[-1])
+			while np.abs(self.angle[-1]) > 0.25:
+				self.mGaitManager.setAAmplitude(0.25)
+				self.mGaitManager.step(self.mTimeStep)
+				self.myStep()
+			print('Yaw Clockwise %.3f°, Finish Correction Program!'%self.angle[-1])
+			self.mGaitManager.setAAmplitude(0.0)
+			self.mGaitManager.step(self.mTimeStep)
+			self.myStep()
+		else:
+			pass
+
+	
 	def checkIfFallen(self):
 		acc_tolerance = 60.0
 		acc_step = 100  # 计数器上限
@@ -138,14 +173,19 @@ class Walk():
 			return False
 
 	def keyBoardControl(self):
-		print(dir(self.mGaitManager))
 		self.isWalking = True  # 初始时机器人未进入行走状态
-		while True:
+		ns = itertools.count(0)
+		for n in ns:
+			if n % 4 == 0 :
+				rgb_raw = getImage(self.mCamera)
+				print('save image')
+				cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
 			self.checkIfFallen()
 			self.mGaitManager.setXAmplitude(0.0)  # 前进为0
 			self.mGaitManager.setAAmplitude(0.0)  # 转体为0
 			key = 0  # 初始键盘读入默认为0
 			key = self.mKeyboard.getKey()  # 从键盘读取输入
+			self.checkIfYaw()
 			if key == 32:  # 如果读取到空格，则改变行走状态
 				if (self.isWalking):  # 如果当前机器人正在走路，则使机器人停止
 					self.mGaitManager.stop()
@@ -160,9 +200,9 @@ class Walk():
 			elif key == 317:  # 如果读取到‘↓’，则后退
 				self.mGaitManager.setXAmplitude(-1.0)
 			elif key == 316:  # 如果读取到‘←’，则左转
-				self.mGaitManager.setAAmplitude(-0.5)
+				self.mGaitManager.setYAmplitude(-1)
 			elif key == 314:  # 如果读取到‘→’，则右转
-				self.mGaitManager.setAAmplitude(0.5) 
+				self.mGaitManager.setYAmplitude(1)
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
 
@@ -176,23 +216,22 @@ class Walk():
 		
 		ns = itertools.count(0)
 		for n in ns:
+			self.checkIfYaw()
 			if n % 100 == 0:
-				cameraData = self.mCamera.getImage()
-				rgba_raw = np.frombuffer(cameraData, np.uint8).reshape((self.mCameraHeight, self.mCameraWidth, 4))
-				rgb_raw = rgba_raw[...,:3]
-				pred = call_model(rgb_raw,self.model1)
+				rgb_raw = getImage(self.mCamera)
+				pred,prob = call_classifier(rgb_raw,self.model1)
 				if not crossBarDownFlag:
 					if pred == 1:
 						crossBarDownFlag = True
-						print('CrossBar already Down')
+						print('CrossBar already Down with probablity %.3f'%prob)
 					else:
-						print('Wait for CrossBar Down...')
+						print('Wait for CrossBar Down with probablity %.3f ...'%prob)
 				else:
 					if pred == 0:
 						goFlag = True
-						print('CrossBar already UP, Go Go Go!')
+						print('CrossBar already UP with probablity %.3f, Go Go Go!'%prob)
 					else:
-						print('Wait for CrossBar Up...')
+						print('Wait for CrossBar Up with probablity %.3f ...'%prob)
 			if goFlag:
 				self.mGaitManager.setXAmplitude(1.0)  # 前进为0
 				self.mGaitManager.setAAmplitude(0.0)  # 转体为0
@@ -203,6 +242,7 @@ class Walk():
 			self.myStep()  # 仿真一个步长
 		n0 = n
 		for n in ns:
+			self.checkIfYaw()
 			# 持续走一段时间，写死了这里
 			if (n-n0) >= 900:
 				break
@@ -229,7 +269,49 @@ class Walk():
 	# 	for n in ns:
 	# 		self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 	# 		self.myStep()  # 仿真一个步长
-
+	def stage7(self):
+		print('########Stage7_Start########')
+		crossBarCloseFlag = False
+		goFlag = False
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		
+		ns = itertools.count(0)
+		for n in ns:
+			self.checkIfYaw()
+			if n % 100 == 0:
+				rgb_raw = getImage(self.mCamera)
+				pred,prob = call_classifier(rgb_raw,self.model7)
+				print(pred,prob)
+				if not crossBarCloseFlag:
+					if pred == 1:
+						crossBarCloseFlag = True
+						print('CrossBar already Close with probablity %.3f'%prob)
+					else:
+						print('Wait for CrossBar Close with probablity %.3f ...'%prob)
+				else:
+					if pred == 0:
+						goFlag = True
+						print('CrossBar already Open with probablity %.3f, Go Go Go!'%prob)
+					else:
+						print('Wait for CrossBar Open with probablity %.3f ...'%prob)
+			if goFlag:
+				self.mGaitManager.setXAmplitude(1.0)  # 前进为0
+				self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+				#self.motors[18].setPosition(radians(50))
+				#self.motors[19].setPosition(radians(30))
+				break
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		n0 = n
+		for n in ns:
+			self.checkIfYaw()
+			# 持续走一段时间，写死了这里
+			if (n-n0) >= 1000:
+				break
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		print('########Stage7_End########')
 
 if __name__ == '__main__':
 	walk = Walk()  # 初始化Walk类
