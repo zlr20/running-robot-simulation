@@ -68,18 +68,18 @@ class Walk():
 
 		# 变量组
 		self.angle = np.array([0.,0.,0.]) # 角度
-		self.omega = np.array([0.,0.,0.]) # 角速度
 		self.velocity = np.array([0.,0.,0.]) # 速度
 
 		# 关卡1-7的预训练模型
 		self.model1 = load_model('./pretrain/1.pth')
-
+		self.model2 = load_model('./pretrain/2.pth')
 		self.model7 = load_model('./pretrain/7.pth')
 
 		
 	def myStep(self):
 		ret = self.robot.step(self.mTimeStep)
-		self.angle,self.omega = updateAngle2(self.angle,self.mTimeStep,self.mGyro)
+		self.angle = updateAngle(self.angle,self.mTimeStep,self.mGyro)
+		#self.velocity = updateVelocity(self.velocity,self.mTimeStep,self.mAccelerometer)
 		if ret == -1:
 			exit(0)
 
@@ -93,7 +93,6 @@ class Walk():
 		print('########Thu-bot Simulation########')
 		self.robot.step(self.mTimeStep)  # 仿真一个步长，刷新传感器读数
 
-		
 		# 准备动作，保持机器人稳定
 		print('Preparing...')
 		self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
@@ -105,25 +104,25 @@ class Walk():
 		self.mGaitManager.setBalanceEnable(True)
 		self.mGaitManager.start()
 
-		
 		# 通过第一关
 		self.stage1()
+		# 通过第二关
 		self.stage2()
 		# 通过第七关
 		#self.stage7()
 
 		# 键盘控制与采集数据
-		#self.keyBoardControl()
+		#self.keyBoardControl(collet_data=1,rotation=0)
 		
 		# 停下
 		self.mGaitManager.stop()
 		self.wait(200)
-		self.mMotionManager.playPage(24)
+		#self.mMotionManager.playPage(24)
 		while True:
 			self.mGaitManager.step(self.mTimeStep)
 			self.myStep()
 
-
+			
 	def checkIfYaw(self, threshold=7.5):
 		if self.angle[-1] > threshold:
 			print('Yaw Anticlockwise %.3f°, Start Correction Program...'%self.angle[-1])
@@ -175,43 +174,81 @@ class Walk():
 		else:
 			return False
 
-	def keyBoardControl(self):
+	
+	def rotatePID(self, target, threshold=0.5,Kp=0.1):
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		self.wait(100) # 保持稳定
+
+		while np.abs(self.angle[-1] - target) > threshold:
+			u = Kp*(target - self.angle[-1])
+			u = np.clip(u,-1,1)
+			self.mGaitManager.setAAmplitude(u)
+			self.mGaitManager.step(self.mTimeStep)
+			self.myStep()
+
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		self.wait(100) # 保持稳定
+	
+	def keyBoardControl(self,collet_data=False,rotation=True):
 		self.isWalking = True  # 初始时机器人未进入行走状态
 		ns = itertools.count(0)
 		for n in ns:
-			if n % 4 == 0 :
+			if n % 200 == 0 and collet_data:
 				rgb_raw = getImage(self.mCamera)
 				print('save image')
-				cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
+				cv2.imwrite('./tmp/f_'+str(n)+'.png',rgb_raw)
 			self.checkIfFallen()
 			self.mGaitManager.setXAmplitude(0.0)  # 前进为0
 			self.mGaitManager.setAAmplitude(0.0)  # 转体为0
 			key = 0  # 初始键盘读入默认为0
 			key = self.mKeyboard.getKey()  # 从键盘读取输入
-			self.checkIfYaw()
-			if key == 32:  # 如果读取到空格，则改变行走状态
-				if (self.isWalking):  # 如果当前机器人正在走路，则使机器人停止
-					self.mGaitManager.stop()
-					self.isWalking = False
-					self.wait(200)
-				else:  # 如果机器人当前停止，则开始走路
-					self.mGaitManager.start()
-					self.isWalking = True
-					self.wait(200)
-			elif key == 315:  # 如果读取到‘↑’，则前进
-				self.mGaitManager.setXAmplitude(1.0)
-			elif key == 317:  # 如果读取到‘↓’，则后退
-				self.mGaitManager.setXAmplitude(-1.0)
-			elif key == 316:  # 如果读取到‘←’，则左转
-				self.mGaitManager.setYAmplitude(-1)
-			elif key == 314:  # 如果读取到‘→’，则右转
-				self.mGaitManager.setYAmplitude(1)
+			if rotation :
+				if key == 32:  # 如果读取到空格，则改变行走状态
+					if (self.isWalking):  # 如果当前机器人正在走路，则使机器人停止
+						self.mGaitManager.stop()
+						self.isWalking = False
+						self.wait(200)
+					else:  # 如果机器人当前停止，则开始走路
+						self.mGaitManager.start()
+						self.isWalking = True
+						self.wait(200)
+				elif key == 315:  # 如果读取到‘↑’，则前进
+					self.mGaitManager.setXAmplitude(1.0)
+				elif key == 317:  # 如果读取到‘↓’，则后退
+					self.mGaitManager.setXAmplitude(-1.0)
+				elif key == 316:  # 如果读取到‘←’，则左转
+					self.mGaitManager.setAAmplitude(-0.5)
+				elif key == 314:  # 如果读取到‘→’，则右转
+					self.mGaitManager.setAAmplitude(0.5)
+			else:
+				self.checkIfYaw()
+				if key == 32:  # 如果读取到空格，则改变行走状态
+					if (self.isWalking):  # 如果当前机器人正在走路，则使机器人停止
+						self.mGaitManager.stop()
+						self.isWalking = False
+						self.wait(200)
+					else:  # 如果机器人当前停止，则开始走路
+						self.mGaitManager.start()
+						self.isWalking = True
+						self.wait(200)
+				elif key == 315:  # 如果读取到‘↑’，则前进
+					self.mGaitManager.setXAmplitude(1.0)
+				elif key == 317:  # 如果读取到‘↓’，则后退
+					self.mGaitManager.setXAmplitude(-1.0)
+				elif key == 316:  # 如果读取到‘←’，则左转
+					self.mGaitManager.setYAmplitude(-1)
+				elif key == 314:  # 如果读取到‘→’，则右转
+					self.mGaitManager.setYAmplitude(1)
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
 
 
 	def stage1(self):
-		print('########Stage0_Start########')
+		print('########Stage1_Start########')
 		crossBarDownFlag = False
 		goFlag = False
 		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
@@ -247,37 +284,46 @@ class Walk():
 		for n in ns:
 			self.checkIfYaw()
 			# 持续走一段时间，写死了这里
-			if (n-n0) >= 900:
+			if (n-n0) >= 950:
 				break
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
-		print('########Stage0_End########')
-
-	
-	def rotatePID(self, target, threshold=0.5,Kp=0.1):
-		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
-		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
-		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-		self.wait(100) # 保持稳定
-
-		while np.abs(self.angle[-1] - target) > threshold:
-			u = Kp*(target - self.angle[-1])
-			u = np.clip(u,-1,1)
-			self.mGaitManager.setAAmplitude(u)
-			self.mGaitManager.step(self.mTimeStep)
-			self.myStep()
-
-		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
-		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
-		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-		self.wait(100) # 保持稳定
-
-		print('after rotation, angle is %.3f'%self.angle[-1])
-
+		print('########Stage1_End########')
 
 	def stage2(self):
 		print('########Stage2_Start########')
-		self.rotatePID(target=-45)
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		self.checkIfYaw(threshold=3.5)
+		ns = itertools.count(0)
+		center_y,center_x = None, None
+		for n in ns:
+			if n % 5 == 0:
+				rgb_raw = getImage(self.mCamera)
+				binary= call_segmentor(rgb_raw,self.model2)
+				trap = np.argwhere(binary == 255)
+				tmp_y,tmp_x = np.mean(trap,axis=0)
+				if not center_y and not center_x:
+					center_y, center_x = tmp_y,tmp_x
+				else:
+					center_y = 0.9*center_y + 0.1*tmp_y
+					center_x = 0.9*center_x + 0.1*tmp_x
+			if center_x < 75:
+				self.mGaitManager.setYAmplitude(0.5)
+				self.checkIfYaw(threshold=3.5)
+			elif center_x > 85:
+				self.mGaitManager.setYAmplitude(-0.5)
+				self.checkIfYaw(threshold=3.5)
+			else:
+				self.mGaitManager.setYAmplitude(0)
+				self.checkIfYaw(threshold=3.5)
+				print('Align Trap CenterX : %d CenterY : %d' %(center_x,center_y))
+				break
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		
+		self.rotatePID(target=45)
 		self.mGaitManager.setXAmplitude(1.0)  # 前进为0
 		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
 		ns = itertools.repeat(0,300)
@@ -285,16 +331,19 @@ class Walk():
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
 		self.rotatePID(target=0)
-		print(self.angle)
 
 
 		self.mGaitManager.setXAmplitude(0.5)  # 前进为0
 		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-		ns = itertools.repeat(0,900)
+		ns = itertools.repeat(0,1000)
 		for n in ns:
-			self.checkIfYaw(threshold=3.0)
+			self.checkIfYaw(threshold=3.5)
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
+		
+	
+		print('########Stage2_End########')
+
 
 	# def stage3(self):
 	# 	print('########Stage3########')

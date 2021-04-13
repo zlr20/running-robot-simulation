@@ -763,7 +763,7 @@ DEF Step Solid {
 }
 DEF Reset_Ruler Robot {
   name "robot(4)"
-  controller "Rst_Ruler_random"
+  controller "thu_Rst_Ruler_random"
   supervisor TRUE
 }
 DEF obscle Solid {

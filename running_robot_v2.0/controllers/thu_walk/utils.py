@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torchvision import transforms
-
+import cv2
 '''
 陀螺仪数模转换
 The gyroscope returns values between 0 and 1024, corresponding to values between -1600 [deg/sec] and +1600 [deg/sec]
@@ -21,12 +21,26 @@ def updateAngle(angle,mTimeStep,mGyro):
 	angle += gyroA * mTimeStep /1000
 	return angle
 
-def updateAngle2(angle,mTimeStep,mGyro):
-	gyroD = mGyro.getValues() #数字信号
-	gyroA = gyroDA(gyroD) #模拟信号
-	omega = gyroA * mTimeStep /1000
-	angle += omega
-	return angle,omega
+'''
+加速度计数模转换
+The accelerometer returns values between 0 and 1024 corresponding to values between -3 [g] to +3 [g] like on the real robot
+'''
+def accDA(accData):
+	accData = np.array(accData)
+	return 6 * 9.8 * accData/1024  - 3 * 9.8
+
+'''
+加速度计积分更新速度
+传入当前速度，仿真周期间隔(ms)以及加速度计传感器句柄
+'''
+def updateVelocity(velocity,mTimeStep,mAccelerometer):
+	accD = mAccelerometer.getValues() #数字信号
+	accA = accDA(accD) #模拟信号
+	#print(accA)
+	velocity += accA * mTimeStep /1000
+	return velocity
+
+
 '''
 摄像头数据采集
 可选模式 rgb rgba gray
@@ -45,20 +59,21 @@ def getImage(mCamera,mode='rgb'):
 '''
 加载关卡预训练模型
 '''
-def load_model(model_path,gpu=False):
-	if gpu:
-		device = torch.device("cuda")
-	else:
-		device = torch.device("cpu")
+if 1:
+	device = torch.device("cuda")
+else:
+	device = torch.device("cpu")
+
+def load_model(model_path):
 	model = torch.load(model_path).to(device)
 	model.eval()
 	return model
 
 def softmax(x):
-    x = x - np.max(x)
-    exp_x = np.exp(x)
-    softmax_x = exp_x / np.sum(exp_x)
-    return softmax_x
+	x = x - np.max(x)
+	exp_x = np.exp(x)
+	softmax_x = exp_x / np.sum(exp_x)
+	return softmax_x
 
 transform=transforms.Compose([
 		transforms.ToTensor(),
@@ -71,7 +86,20 @@ def call_classifier(img,model):
 	img = transform(img)
 	img = torch.unsqueeze(img, 0)
 	with torch.no_grad():
-		output = model(img).numpy().flatten()
+		output = model(img.to(device)).cpu().numpy().flatten()
 	prob = softmax(output)
 	pred = np.argmax(output).item()
 	return pred, prob[pred]
+
+def call_segmentor(img,model):
+	img = transform(img)
+	img = torch.unsqueeze(img, 0)
+	with torch.no_grad():
+		output = model(img.to(device)).cpu().numpy()
+	res = output.reshape(120,160)
+	res_max = min(np.max(res),-5)
+	res_min = max(np.min(res),-10)
+	gray = np.clip(255*(res-res_min)/(res_max-res_min),0,255)
+	gray = gray.astype(np.uint8)
+	_, binary = cv2.threshold(gray,200,255,cv2.THRESH_BINARY)
+	return binary
