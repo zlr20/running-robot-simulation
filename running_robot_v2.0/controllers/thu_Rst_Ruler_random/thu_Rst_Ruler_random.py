@@ -15,7 +15,7 @@ import numpy as np
 #import urllib2
 
 # DARWIN
-flag=5 # 1 2 3 4 5 6 7
+flag=1 # 1 2 3 4 5 6 7
 
 # 全局变量定义
 # 方块定义：
@@ -57,7 +57,7 @@ LEVEL_DOUBLEBAR = 8
 LEVEL_AMOUNT = 9
 
 bias=-1+2*np.random.random()
-scale=0.2
+scale=0.
 noise=bias*scale
 
 if flag==1:

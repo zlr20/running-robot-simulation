@@ -68,6 +68,7 @@ class Walk():
 
 		# 变量组
 		self.angle = np.array([0.,0.,0.]) # 角度
+		self.omega = np.array([0.,0.,0.]) # 角速度
 		self.velocity = np.array([0.,0.,0.]) # 速度
 
 		# 关卡1-7的预训练模型
@@ -78,7 +79,7 @@ class Walk():
 		
 	def myStep(self):
 		ret = self.robot.step(self.mTimeStep)
-		self.angle = updateAngle(self.angle,self.mTimeStep,self.mGyro)
+		self.angle,self.omega = updateAngle2(self.angle,self.mTimeStep,self.mGyro)
 		if ret == -1:
 			exit(0)
 
@@ -104,8 +105,10 @@ class Walk():
 		self.mGaitManager.setBalanceEnable(True)
 		self.mGaitManager.start()
 
+		
 		# 通过第一关
 		self.stage1()
+		self.stage2()
 		# 通过第七关
 		#self.stage7()
 
@@ -120,7 +123,7 @@ class Walk():
 			self.mGaitManager.step(self.mTimeStep)
 			self.myStep()
 
-			
+
 	def checkIfYaw(self, threshold=7.5):
 		if self.angle[-1] > threshold:
 			print('Yaw Anticlockwise %.3f°, Start Correction Program...'%self.angle[-1])
@@ -250,15 +253,48 @@ class Walk():
 			self.myStep()  # 仿真一个步长
 		print('########Stage0_End########')
 
-	# def stage2(self):
-	# 	print('########Stage2########')
-	# 	self.motors[19].setPosition(radians(10))
-	# 	self.mGaitManager.setXAmplitude(0.0)  # 前进为0
-	# 	self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-	# 	ns = itertools.count(0)
-	# 	for n in ns:
-	# 		self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-	# 		self.myStep()  # 仿真一个步长
+	
+	def rotatePID(self, target, threshold=0.5,Kp=0.1):
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		self.wait(100) # 保持稳定
+
+		while np.abs(self.angle[-1] - target) > threshold:
+			u = Kp*(target - self.angle[-1])
+			u = np.clip(u,-1,1)
+			self.mGaitManager.setAAmplitude(u)
+			self.mGaitManager.step(self.mTimeStep)
+			self.myStep()
+
+		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setYAmplitude(0.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		self.wait(100) # 保持稳定
+
+		print('after rotation, angle is %.3f'%self.angle[-1])
+
+
+	def stage2(self):
+		print('########Stage2_Start########')
+		self.rotatePID(target=-45)
+		self.mGaitManager.setXAmplitude(1.0)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		ns = itertools.repeat(0,300)
+		for n in ns:
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		self.rotatePID(target=0)
+		print(self.angle)
+
+
+		self.mGaitManager.setXAmplitude(0.5)  # 前进为0
+		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+		ns = itertools.repeat(0,900)
+		for n in ns:
+			self.checkIfYaw(threshold=3.0)
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
 
 	# def stage3(self):
 	# 	print('########Stage3########')

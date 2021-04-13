@@ -21,6 +21,12 @@ def updateAngle(angle,mTimeStep,mGyro):
 	angle += gyroA * mTimeStep /1000
 	return angle
 
+def updateAngle2(angle,mTimeStep,mGyro):
+	gyroD = mGyro.getValues() #数字信号
+	gyroA = gyroDA(gyroD) #模拟信号
+	omega = gyroA * mTimeStep /1000
+	angle += omega
+	return angle,omega
 '''
 摄像头数据采集
 可选模式 rgb rgba gray
