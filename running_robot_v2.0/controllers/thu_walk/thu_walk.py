@@ -14,6 +14,7 @@ import numpy as np
 from math import radians
 import itertools
 from utils import *
+from yolo import *
 
 class Walk():
 	def __init__(self):
@@ -166,8 +167,8 @@ class Walk():
 		self.setSideSpeed(0.)
 		self.setRotationSpeed(0.)
 	
-	def setRobotRun(self):
-		self.setForwardSpeed(1.)
+	def setRobotRun(self,speed=1.):
+		self.setForwardSpeed(speed)
 		self.setSideSpeed(0.)
 		self.setRotationSpeed(0.)
 
@@ -177,7 +178,7 @@ class Walk():
 		if np.abs(self.angle[-1]) > threshold:
 			print('Current Yaw is %.3f, begin correction' % self.angle[-1])
 			while np.abs(self.angle[-1]) > eps:
-				u = -0.1 * self.angle[-1]
+				u = -0.02 * self.angle[-1]
 				u = np.clip(u,-1,1)
 				self.setMoveCommand(vA = u)
 				self.mGaitManager.step(self.mTimeStep)
@@ -206,25 +207,25 @@ class Walk():
 	
 	# 构造Z字轨迹
 	def Z(self,angle,interval):
+		speed = self.vX
 		# 左转45度
 		self.setRotation(angle)
-		self.setForwardSpeed(1.0)
+		self.setForwardSpeed(speed)
 		ns = itertools.repeat(0,interval)
 		for n in ns:
 			self.mGaitManager.step(self.mTimeStep)
 			self.myStep()
 		self.setRotation(0)
-		self.setRobotRun()
+		self.setRobotRun(speed) # 保存原来的行进速度
 		
 	def keyBoardControl(self,collet_data=False,rotation=True):
-		self.isWalking = True  # 初始时机器人未进入行走状态
+		self.isWalking = True
 		ns = itertools.count(0)
 		for n in ns:
 			if n % 200 == 0 and collet_data:
 				rgb_raw = getImage(self.mCamera)
 				print('save image')
 				cv2.imwrite('./tmp/f_'+str(n)+'.png',rgb_raw)
-			self.checkIfFallen()
 			self.mGaitManager.setXAmplitude(0.0)  # 前进为0
 			self.mGaitManager.setAAmplitude(0.0)  # 转体为0
 			key = 0  # 初始键盘读入默认为0
@@ -340,25 +341,55 @@ class Walk():
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
 		
+		self.setRobotRun()
 		self.Z(angle=45,interval=275)
 		ns = itertools.repeat(0,500)
 		for n in ns:
 			self.checkIfYaw(threshold=3.0)
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
-		self.Z(angle=-45,interval=275)
+		self.setRobotRun(0.5)
+		self.Z(angle=-45,interval=500)
 		print('########Stage2_End########')
 
 
-	# def stage3(self):
-	# 	print('########Stage3########')
-	# 	self.mGaitManager.setYAmplitude(1.0)  # 前进为0
-	# 	self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+	def stage3(self):
+		print('########Stage3_Start########')
+		self.setRobotRun(1.0)
+		self.motors[19].setPosition(radians(0))
+		yolonet,yolodecoders = load_yolo('./pretrain/3.pth',class_names=['dilei'])
+		ns = itertools.count(0)
+		for n in ns:
+			if n % 5 == 0 and np.abs(self.angle[0]) < 1.0:
+				rgb_raw = getImage(self.mCamera)
+				#cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
+				res = call_yolo(rgb_raw,yolonet,yolodecoders,class_names=['dilei'])
+				if not res:
+					print('%d Mine(s) has been Detected' % len(res))
+				# 只看视野一定范围内的地雷，过远的忽略
+				centers = [[(left+right)/2, (top+down)/2] for (top,left,down,right) in res]
+				centers = [center for center in centers if center[1]>0.5*self.mCameraHeight]
+				if not centers:
+					pass
+				else:
+					# 看一下地雷距离视野中轴线的水平距离，判定危险级
+					danger = [center[0] - self.mCameraWidth/2 for center in centers]
+					danger = sorted(danger, key=lambda x: np.abs(x))
+					if np.abs(danger[0]) < 45:
+						print('Warning!')
+						#self.Z(0,interval=20)
+						if len(danger)==1:
+							self.Z(30,interval=200) if danger[0] >= 0 else self.Z(-45,interval=100)
+						else:
+							self.Z(30,interval=200) if danger[1] >= 0 else self.Z(-45,interval=100)
+					else:
+						pass
+			self.checkIfYaw(threshold=5.)
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		print('########Stage3_End########')
 
-	# 	ns = itertools.count(0)
-	# 	for n in ns:
-	# 		self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-	# 		self.myStep()  # 仿真一个步长
+
 	def stage7(self):
 		print('########Stage7_Start########')
 		crossBarCloseFlag = False
@@ -412,15 +443,17 @@ class Walk():
 		self.stage1()
 		# 通过第二关
 		self.stage2()
+		# 通过第三关
+		self.stage3()
 		# 通过第七关
 		#self.stage7()
 		# 键盘控制与采集数据
-		#self.keyBoardControl(collet_data=1,rotation=0)
+		#self.keyBoardControl(collet_data=1,rotation=1)
 		
 		# 停下
 		self.setRobotStop()
 		self.wait(200)
-		self.mMotionManager.playPage(24)
+		#self.mMotionManager.playPage(24)
 
 		while True:
 			#self.checkIfYaw(threshold=3.0)
