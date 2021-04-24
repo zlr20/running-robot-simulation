@@ -103,3 +103,23 @@ def call_segmentor(img,model):
 	gray = gray.astype(np.uint8)
 	_, binary = cv2.threshold(gray,200,255,cv2.THRESH_BINARY)
 	return binary
+
+
+'''
+HSV空间颜色检测，用于检测蓝色的obstacle，即需要翻越的那个坎
+'''
+def obstacleDetect(img):
+    h,w = img.shape[:2]
+    hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+    blue1 = np.array([110,250,0]) 
+    blue2 = np.array([130,255,255]) 
+    mask=cv2.inRange(hsv,blue1,blue2)
+    contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 80,-1 # 默认在视野之外，用于调速，没看见（为负）则可以快速走
+    # 找面积最大的轮廓
+    area = [cv2.contourArea(contour) for contour in contours]
+    max_idx = np.argmax(np.array(area))
+    target = contours[max_idx]
+    x,y,w,h = cv2.boundingRect(target)
+    return int(x+w/2), int(y+h/2)

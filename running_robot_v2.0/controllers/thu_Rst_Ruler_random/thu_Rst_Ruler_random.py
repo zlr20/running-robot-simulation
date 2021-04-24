@@ -1,9 +1,8 @@
 """position_reset controller."""
 from controller import Supervisor, Node, Field
 from controller import Robot, Motor
-# import numpy as np
+import numpy as np
 import math
-from math import pi
 import copy
 import random
 import socket
@@ -11,11 +10,46 @@ import sys
 import os
 import time
 from urllib import request, parse, error
-import numpy as np
 #import urllib2
 
-# DARWIN
-flag=1 # 1 2 3 4 5 6 7
+# 指定关卡
+flag = 7
+# 是否随机布置赛道
+RANDOM_FLAG = False
+
+
+bias=-1+2*np.random.random()
+scale=0.
+noise=bias*scale
+
+if flag==1:
+    DARWIN_START_POINT = [-2+noise, 0.8175, -2]
+    DEFAULT_DIREC = [0, 1, 0, 0]
+elif flag==2:
+    DARWIN_START_POINT = [-2+noise, 0.8175, -1.3]
+    DEFAULT_DIREC = [0, 1, 0, 0]
+elif flag==3:
+    DARWIN_START_POINT = [-2+noise, 0.8175, -0.5]
+    DEFAULT_DIREC = [0, 1, 0, 0]
+elif flag==4:
+    DARWIN_START_POINT = [-2+noise, 0.8175, 0.75]
+    DEFAULT_DIREC = [0, 1, 0, 0]
+elif flag==5:
+    DARWIN_START_POINT = [-0.8, 0.82, 1.59+noise]
+    DEFAULT_DIREC = [ 0, 1, 0, np.pi/2]
+elif flag==6:
+    DARWIN_START_POINT = [0.2, 0.82, 1.59+noise]
+    DEFAULT_DIREC = [ 0, 1, 0, np.pi/2]
+elif flag==7:
+    DARWIN_START_POINT = [2.19, 0.825, 1.20] # 楼梯前
+    # DARWIN_START_POINT = [2.19, 0.87, 0.75] # 楼梯最高点
+    DEFAULT_DIREC = [0, 1, 0,np.pi] # [0, 1, 0, pi/2]
+else:
+    DARWIN_START_POINT = [2.23+noise, 0.818, -0.158]
+    DEFAULT_DIREC = [0, 1, 0, np.pi]
+    
+DARWIN_CENTER_HEIGHT_STAND = 0.32
+
 
 # 全局变量定义
 # 方块定义：
@@ -55,34 +89,10 @@ LEVEL_BALL = 6
 LEVEL_STEP = 7
 LEVEL_DOUBLEBAR = 8
 LEVEL_AMOUNT = 9
-
-bias=-1+2*np.random.random()
-scale=0.
-noise=bias*scale
-
-if flag==1:
-    DARWIN_START_POINT = [-2+noise, 0.8175, -2]
-    DEFAULT_DIREC = [0, 1, 0, 0]
-elif flag==2:
-    DARWIN_START_POINT = [-2+noise, 0.8175, -1.3]
-    DEFAULT_DIREC = [0, 1, 0, 0]
-elif flag==3:
-    DARWIN_START_POINT = [-2+noise, 0.8175, -0.5]
-    DEFAULT_DIREC = [0, 1, 0, 0]
-elif flag==4:
-    DARWIN_START_POINT = [-2+noise, 0.8175, 1.1]
-    DEFAULT_DIREC = [0, 1, 0, 0]
-elif flag==5:
-    DARWIN_START_POINT = [-0.673, 0.82, 1.59+noise]
-    DEFAULT_DIREC = [ 0, 1, 0, pi/2]
-elif flag==6:
-    DARWIN_START_POINT = [2.19, 0.825, 1.55] # [1.63, 0.825, 1.56+noise]
-    DEFAULT_DIREC = [0, 1, 0, pi] # [0, 1, 0, pi/2]
-else:
-    DARWIN_START_POINT = [2.23+noise, 0.818, -0.158]
-    DEFAULT_DIREC = [0, 1, 0, pi]
-    
-DARWIN_CENTER_HEIGHT_STAND = 0.32
+# # DARWIN
+# DARWIN_START_POINT = [-2, 0.8175, -2]
+# DEFAULT_DIREC = [0, 1, 0, 0]
+# DARWIN_CENTER_HEIGHT_STAND = 0.32
 
 #重心高度：
 RACE_HEIGHT = 0.5
@@ -496,13 +506,14 @@ class runningrobot_env:
         block = [
             BLOCK_TRAP,
             BLOCK_SECOND,
-            BLOCK_THIRD,
-            BLOCK_BRIDGE,
             BLOCK_FORTH,
+            BLOCK_BRIDGE,
+            BLOCK_THIRD,
             BLOCK_STEP,
         ]  # 将序列BLOCK中的元素顺序打乱[0-5]
         while True:
-            # random.shuffle(block)
+            if RANDOM_FLAG:
+                random.shuffle(block)
             # print(block)
             self.map.append(block) # 记录方块顺序
             len_cnt = 0
@@ -575,12 +586,16 @@ class runningrobot_env:
         rest_type = [BLOCK_START, BLOCK_END]  # 剩下的方块
         sublevel = [0 for _ in range(6)]
 
-        # random.shuffle(block_type1)
+        if RANDOM_FLAG:
+            random.shuffle(block_type1)
         sublevel[1] = block_type1[0]
         sublevel[4] = block_type1[1]
         block_type11 = [BLOCK_SECOND, BLOCK_THIRD, BLOCK_FORTH]  # 地雷,球,挡板所允许的方块：
-        # random.shuffle(block_type11)
-        sublevel[5] = block_type11[0]
+        if RANDOM_FLAG:
+            random.shuffle(block_type11)
+            sublevel[5] = block_type11[0]
+        else:
+            sublevel[5] = block_type1[0]
 
         rest_type = rest_type + [block_type1[2]]
         # random.shuffle(rest_type)
@@ -1030,7 +1045,7 @@ class runningrobot_env:
             cnt = cnt + 1
             if cnt == self.single_action_num:
                 break
-#--------------------------------------------------------------------------------------
+
      
 def open_config():
     this_file_absolute_path = os.path.abspath(os.path.join(os.getcwd(), ".."))

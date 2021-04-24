@@ -1,5 +1,5 @@
 # -*- coding: UTF-8 -*-
-from controller import Robot
+from controller import Robot, Motion
 import os
 import sys
 
@@ -388,22 +388,131 @@ class Walk():
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
 		print('########Stage3_End########')
+	
+	def stage4(self):
+		print('########Stage4_Start########')
+		# 调整头部位置，低下头看
+		self.setRobotRun(0.0)
+		self.mGaitManager.stop()
+		self.motors[19].setPosition(-0.3)
+		# 重复50个空循环等待电机到位
+		ns = itertools.repeat(0,50)
+		for n in ns:
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		# rgb_raw = getImage(self.mCamera)
+		# cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
 
+		self.mGaitManager.start()
+		self.setRobotRun(1.0)
+		ns = itertools.count(0)
+		for n in ns:
+			self.checkIfYaw()
+			if np.abs(self.angle[0]) < 1.0: 
+				rgb_raw = getImage(self.mCamera)
+				ob_x,ob_y = obstacleDetect(rgb_raw)
+				if ob_y > 0:
+					self.setRobotRun(0.5) # 看到蓝色障碍物注意减速
+				if ob_y > 75: # 蓝色障碍物出现在正确位置，跳出循环，准备空翻
+					break
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		
+		# 空翻与起身
+		self.setRobotRun(0.0)
+		self.mGaitManager.stop()
+		rollMotion = Motion('./motion/roll.motion')
+		rollMotion.setLoop(False)
+		rollMotion.play()
+		while not rollMotion.isOver():
+			self.myStep()
+		self.mMotionManager.playPage(11)
+		self.mMotionManager.playPage(9)
+
+		# 陀螺仪累计数据全部清空
+		self.angle = np.array([0.,0.,0.])
+
+		# 往后退两步
+		self.mGaitManager.start()
+		self.setForwardSpeed(-0.1)
+		ns = itertools.repeat(0,500)
+		for n in ns:
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		
+		self.setForwardSpeed(-0.05)
+		ns = itertools.count(0)
+		for n in ns:
+			if np.abs(self.angle[-1]) < 1.0:
+				rgb_raw = getImage(self.mCamera)
+				cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+			if n == 1000:
+				break
+
+
+		
+		# # 起身后转向90度，开始下一阶段任务
+		# self.mGaitManager.start()
+		# self.setRotation(20)
+		# self.wait(100)
+		# self.setRotation(40)
+		# self.wait(100)
+		# self.setRotation(80)
+		# self.wait(100)
+
+		# # 抬头，准备对齐赛道
+		# self.motors[19].setPosition(0.6)
+		# # 重复50个空循环等待电机到位
+		# ns = itertools.repeat(0,50000)
+		# for n in ns:
+		# 	self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+		# 	self.myStep()  # 仿真一个步长
+		print('########Stage4_End########')
 
 	def stage7(self):
 		print('########Stage7_Start########')
+		self.setRobotRun(0.0)
+		self.mGaitManager.stop()
+		stepMotion = Motion('motion/stair_up.motion')
+		stepMotion.setLoop(False)
+		stepMotion.play()
+		while not stepMotion.isOver():
+			self.myStep()
+		# 陀螺仪累计数据全部清空
+		self.angle = np.array([0.,0.,0.])
+		stepMotion = Motion('motion/stair_down.motion')
+		stepMotion.setLoop(False)
+		stepMotion.play()
+		while not stepMotion.isOver():
+			self.myStep()
+		stepMotion.play()
+		while not stepMotion.isOver():
+			self.myStep()
+		self.mGaitManager.start()
+		self.setForwardSpeed(0.0)
+		self.checkIfYaw(threshold=3.0)
+		self.setForwardSpeed(1.0)
+		ns = itertools.repeat(0,700)
+		for n in ns:
+			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+			self.myStep()  # 仿真一个步长
+		self.setRobotStop()
+		self.mGaitManager.stop()
+		print('########Stage7_End########')
+
+
+	def stage8(self):
+		print('########Stage8_Start########')
 		crossBarCloseFlag = False
 		goFlag = False
-		self.mGaitManager.setXAmplitude(0.0)  # 前进为0
-		self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-		
 		ns = itertools.count(0)
 		for n in ns:
 			self.checkIfYaw()
 			if n % 100 == 0:
 				rgb_raw = getImage(self.mCamera)
 				pred,prob = call_classifier(rgb_raw,self.model7)
-				print(pred,prob)
 				if not crossBarCloseFlag:
 					if pred == 1:
 						crossBarCloseFlag = True
@@ -417,10 +526,8 @@ class Walk():
 					else:
 						print('Wait for CrossBar Open with probablity %.3f ...'%prob)
 			if goFlag:
-				self.mGaitManager.setXAmplitude(1.0)  # 前进为0
-				self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-				#self.motors[18].setPosition(radians(50))
-				#self.motors[19].setPosition(radians(30))
+				self.mGaitManager.start()
+				self.setRobotRun()
 				break
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
@@ -432,28 +539,35 @@ class Walk():
 				break
 			self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
 			self.myStep()  # 仿真一个步长
-		print('########Stage7_End########')
+		print('########Stage8_End########')
 	
 
 	# 主函数循环
 	def run(self):
 		# 准备动作
-		self.prepare(waitingTime=250)
-		# 通过第一关
-		self.stage1()
-		# 通过第二关
-		self.stage2()
-		# 通过第三关
-		self.stage3()
+		self.prepare(waitingTime=500)
+		
+		# 通过第一关	上下开横杆
+		#self.stage1()
+		# 通过第二关	回字陷阱	
+		#self.stage2()
+		# 通过第三关	地雷路段
+		#self.stage3()
+		# 通过第四关	翻越障碍与过门
+		#self.stage4()
+		# 通过第五关	窄桥路段
+		#self.stage5()
+		# 通过第六关	踢球进洞
+		#self.stage6()
 		# 通过第七关
 		#self.stage7()
+		# 通过第八关
+		#self.stage8()
 		# 键盘控制与采集数据
 		#self.keyBoardControl(collet_data=1,rotation=1)
 		
 		# 停下
-		self.setRobotStop()
-		self.wait(200)
-		#self.mMotionManager.playPage(24)
+		self.mMotionManager.playPage(24)
 
 		while True:
 			#self.checkIfYaw(threshold=3.0)
