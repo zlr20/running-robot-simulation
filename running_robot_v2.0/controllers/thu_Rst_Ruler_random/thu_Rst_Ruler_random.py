@@ -13,7 +13,7 @@ from urllib import request, parse, error
 #import urllib2
 
 # 指定关卡
-flag = 7
+flag = 5
 # 是否随机布置赛道
 RANDOM_FLAG = False
 
