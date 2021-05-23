@@ -71,7 +71,7 @@ class Walk():
         self.velocity = np.array([0., 0., 0.])  # 速度， 由加速度计积分获得
 
     # 加载关卡1-7的预训练模型
-    # self.model1 = load_model('./pretrain/1.pth')
+    
     # self.model2 = load_model('./pretrain/2.pth')
 
     # 执行一个仿真步。同时每步更新机器人偏航角度。
@@ -190,14 +190,13 @@ class Walk():
         # 准备动作
         print('Preparing...')
         self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
-        self.wait(500)
+        #self.wait(500)
         # 开始运动
         self.mGaitManager.setBalanceEnable(True)
         self.mGaitManager.start()
         self.setRobotStop()
         self.wait(waitingTime)
         print('Ready to Play!')
-        print('Initial Yaw is %.3f' % self.angle[-1])
         print('########Preparation_End########')
 
     # 构造Z字轨迹
@@ -227,15 +226,17 @@ class Walk():
                 cv2.imwrite('./tmp/c_' + str(n) + '.png', rgb_raw)
             if key == 49:
                 pos = self.positionSensors[19].getValue()
+                print(f'Head Pos: {pos}')
                 self.motors[19].setPosition(np.clip(pos + 0.05, -0.25, 0.4))
             elif key == 50:
                 pos = self.positionSensors[19].getValue()
+                print(f'Head Pos: {pos}')
                 self.motors[19].setPosition(np.clip(pos - 0.05, -0.25, 0.4))
-            elif key == 51:
-                if collet_data == 1:
-                    collet_data = 0
-                if collet_data == 0:
-                    collet_data = 1
+            # elif key == 51:
+            #     if collet_data == 1:
+            #         collet_data = 0
+            #     if collet_data == 0:
+            #         collet_data = 1
             if rotation:
                 if key == 32:  # 如果读取到空格，则改变行走状态
                     if (self.isWalking):  # 如果当前机器人正在走路，则使机器人停止
@@ -279,6 +280,7 @@ class Walk():
     # 水平开合横杆
     def stage1(self):
         print('########Stage1_Start########')
+        stage1model = load_model('./pretrain/1.pth')
         crossBarDownFlag = False
         goFlag = False
         ns = itertools.count(0)
@@ -286,7 +288,7 @@ class Walk():
             self.checkIfYaw()
             if n % 100 == 0:
                 rgb_raw = getImage(self.mCamera)
-                pred, prob = call_classifier(rgb_raw, self.model1)
+                pred, prob = call_classifier(rgb_raw, stage1model)
                 if not crossBarDownFlag:
                     if pred == 1:
                         crossBarDownFlag = True
@@ -302,7 +304,7 @@ class Walk():
             if goFlag:
                 self.setRobotRun()
                 # self.motors[18].setPosition(radians(50))
-                # self.motors[19].setPosition(radians(30))
+                self.motors[19].setPosition(radians(0))
                 break
             self.mGaitManager.step(self.mTimeStep)
             self.myStep()
@@ -314,19 +316,21 @@ class Walk():
                 break
             self.mGaitManager.step(self.mTimeStep)
             self.myStep()
+        del stage1model
         print('########Stage1_End########')
 
     # 回字陷阱
     def stage2(self):
         print('########Stage2_Start########')
         self.setRobotStop()
+        stage2model = load_model('./pretrain/2.pth')
         self.checkIfYaw(threshold=3.0)
         ns = itertools.count(0)
         center_y, center_x = None, None
         for n in ns:
             if n % 5 == 0:
                 rgb_raw = getImage(self.mCamera)
-                binary = call_segmentor(rgb_raw, self.model2)
+                binary = call_segmentor(rgb_raw, stage2model)
                 trap = np.argwhere(binary == 255)
                 tmp_y, tmp_x = np.mean(trap, axis=0)
                 if not center_y and not center_x:
@@ -357,6 +361,7 @@ class Walk():
             self.myStep()  # 仿真一个步长
         self.setRobotRun(0.5)
         self.Z(angle=-45, interval=500)
+        del stage2model
         print('########Stage2_End########')
 
     # 地雷路段
@@ -430,7 +435,7 @@ class Walk():
             self.myStep()  # 仿真一个步长
 
         # 空翻与起身
-        self.setRobotRun(0.0)
+        self.mMotionManager.playPage(1)
         self.mGaitManager.stop()
         rollMotion = Motion('./motion/roll.motion')
         rollMotion.setLoop(False)
@@ -440,46 +445,101 @@ class Walk():
         self.mMotionManager.playPage(11)
         self.mMotionManager.playPage(9)
 
-        # 陀螺仪累计数据全部清空
-        self.angle = np.array([0., 0., 0.])
-
-        # 往后退两步
+        # 转向，向左转，注意按条件终止
+        self.setForwardSpeed(0.)
+        self.setSideSpeed(0.)
+        self.setRotationSpeed(0.)
         self.mGaitManager.start()
-        self.setForwardSpeed(-0.1)
-        ns = itertools.repeat(0, 500)
-        for n in ns:
-            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-            self.myStep()  # 仿真一个步长
-
-        self.setForwardSpeed(-0.05)
         ns = itertools.count(0)
         for n in ns:
-            if np.abs(self.angle[-1]) < 1.0:
+            if n % 5 == 0:
                 rgb_raw = getImage(self.mCamera)
-                cv2.imwrite('./tmp/' + str(n) + '.png', rgb_raw)
+                k = cornerTurn(rgb_raw)
+            if np.abs(k) < 0.1:
+                self.setMoveCommand(vA=0.0)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+                break
+            else:
+                self.setMoveCommand(vA=1.0)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+
+        # 陀螺仪累计数据全部清空
+        self.angle = np.array([0., 0., 0.])
+        self.mMotionManager.playPage(9)
+        self.mGaitManager.start()
+        self.setRobotStop()
+        self.checkIfYaw()
+        self.mMotionManager.playPage(1)
+        self.mGaitManager.stop()
+        self.prepare(waitingTime=250)
+        self.passDoor()
+        print('########Stage4_End########')
+    
+    # Copy from yzc
+    def passDoor(self):
+        self.motors[19].setPosition(0.5)
+        ns = itertools.count(0)
+        turn_flag = 0
+        count=0
+        for n in ns:
+            action_flag = 0
+            if n%20==0:
+                rgb_raw = np.array(getImage(self.mCamera),dtype=np.uint8)
+                gs_frame = cv2.GaussianBlur(rgb_raw, (5, 5), 0) 
+                gray = cv2.cvtColor(gs_frame, cv2.COLOR_RGB2GRAY)
+                _, dst = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
+                dst=~dst
+                cnts = cv2.findContours(dst.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                
+                points =[]
+                if cnts:
+                    for cnt in cnts:
+                        rect = cv2.minAreaRect(cnt)
+                        box = cv2.boxPoints(rect)
+
+                        b = []
+                        for i in range(4):
+                            if box[i][1] >= 30:
+                                b.append(box[i])
+                        if b:
+                            if b[0][0]<=80:
+                                point = b[0] if b[0][0] > b[1][0] else b[1]
+                            else:
+                                point = b[1] if b[0][0] > b[1][0] else b[0]
+                            points.append(point)
+                        # cv2.circle(rgb_raw, (int(point[0]), int(point[1])), point_size, point_color1, thickness)
+                # cv2.imshow('img', rgb_raw)
+                # cv2.waitKey(0)
+                if len(points)==2:
+                    mid_x = (points[0][0]+points[1][0])/2
+                    mid_y = (points[0][1]+points[1][1])/2
+                    if turn_flag == 0:
+                        if mid_x < 75:
+                            self.turn_left(0.2)
+                            action_flag = 1
+                        if mid_x > 85:
+                            self.turn_right(0.2)
+                            action_flag = 1
+                        if mid_y >= 110 and turn_flag == 0:
+                            turn_flag = 1
+
+                if turn_flag == 1:
+                    count += 1
+                    if count == 600:
+                        break
+
+                if not action_flag:
+                    self.checkIfYaw()
+                    self.mGaitManager.setXAmplitude(0.8)  # 前进为0
+                    self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
-            if n == 1000:
-                break
-
-        # # 起身后转向90度，开始下一阶段任务
-        # self.mGaitManager.start()
-        # self.setRotation(20)
-        # self.wait(100)
-        # self.setRotation(40)
-        # self.wait(100)
-        # self.setRotation(80)
-        # self.wait(100)
-
-        # # 抬头，准备对齐赛道
-        # self.motors[19].setPosition(0.6)
-        # # 重复50个空循环等待电机到位
-        # ns = itertools.repeat(0,50000)
-        # for n in ns:
-        # 	self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-        # 	self.myStep()  # 仿真一个步长
-        print('########Stage4_End########')
-
+        
     # 过桥
     def stage5(self):
         ball_color = 'green'
@@ -750,7 +810,6 @@ class Walk():
     def run(self):
         # 准备动作
         self.prepare(waitingTime=500)
-
         # 通过第一关	上下开横杆
         # self.stage1()
         # 通过第二关	回字陷阱
@@ -758,11 +817,13 @@ class Walk():
         # 通过第三关	地雷路段
         # self.stage3()
         # 通过第四关	翻越障碍与过门
-        # self.stage4()
+        self.stage4()
+        # self.prepare(waitingTime=500)
+        # self.passDoor()
         # 通过第五关	窄桥路段
-        self.stage5()
+        # self.stage5()
         # 通过第六关	踢球进洞
-        self.stage6()
+        # self.stage6()
         # 通过第七关	走楼梯
         # self.stage7()
         # 通过第八关	水平开横杆

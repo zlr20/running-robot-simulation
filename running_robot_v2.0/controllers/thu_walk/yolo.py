@@ -71,24 +71,24 @@ def call_yolo(image,net,decoders,class_names,confidence=0.25,iou=0.3):
 			return result
 
 if __name__ == '__main__':
-	model_path = '/home/zhanglr/MyProj/running-robot-simulation/running_robot_v2.0/controllers/thu_walk/pretrain/hole.pth'
-	class_names  = ['ball','hole']
-
-	net,decoders = load_yolo(model_path,class_names)
-	torch.save(net.state_dict(), '/home/zhanglr/MyProj/running-robot-simulation/running_robot_v2.0/controllers/thu_walk/pretrain/6_hole.pth',_use_new_zipfile_serialization=False)
-	# image=cv2.imread('tmp/1000.png')
-	# image_copy = image.copy()
-	# image = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
-
-	# model_path = './pretrain/6.pth'
+	# model_path = '/home/zhanglr/MyProj/running-robot-simulation/running_robot_v2.0/controllers/thu_walk/pretrain/hole.pth'
 	# class_names  = ['ball','hole']
 
 	# net,decoders = load_yolo(model_path,class_names)
-	# res = call_yolo(image,net,decoders,class_names,confidence=0.1)
+	# torch.save(net.state_dict(), '/home/zhanglr/MyProj/running-robot-simulation/running_robot_v2.0/controllers/thu_walk/pretrain/6_hole.pth',_use_new_zipfile_serialization=False)
+	image=cv2.imread('tmp/1000.png')
+	image_copy = image.copy()
+	image = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
 
-	# for info in res:
-	# 	pred_class = info['class']
-	# 	x1,y1,x2,y2 = info['bbox']
-	# 	cv2.rectangle(image_copy,(y1,x1),(y2,x2),(0,255,0),1)
+	model_path = './pretrain/6.pth'
+	class_names  = ['ball','hole']
+
+	net,decoders = load_yolo(model_path,class_names)
+	res = call_yolo(image,net,decoders,class_names,confidence=0.1)
+
+	for info in res:
+		pred_class = info['class']
+		x1,y1,x2,y2 = info['bbox']
+		cv2.rectangle(image_copy,(y1,x1),(y2,x2),(0,255,0),1)
 	
-	# cv2.imwrite('res.png',image_copy)
+	cv2.imwrite('res.png',image_copy)
