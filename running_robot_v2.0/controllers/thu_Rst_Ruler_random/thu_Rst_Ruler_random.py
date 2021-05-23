@@ -13,9 +13,9 @@ from urllib import request, parse, error
 #import urllib2
 
 # 指定关卡
-flag = 5
+flag = 4
 # 是否随机布置赛道
-RANDOM_FLAG = True
+RANDOM_FLAG = False
 
 
 bias=-1+2*np.random.random()
@@ -513,8 +513,8 @@ class runningrobot_env:
             BLOCK_STEP,
         ]  # 将序列BLOCK中的元素顺序打乱[0-5]
         while True:
-            # if RANDOM_FLAG:
-            #   random.shuffle(block)
+            if RANDOM_FLAG:
+              random.shuffle(block)
             # print(block)
             self.map.append(block) # 记录方块顺序
             len_cnt = 0
@@ -588,8 +588,7 @@ class runningrobot_env:
         sublevel = [0 for _ in range(6)]
 
         if RANDOM_FLAG:
-            pass
-            # random.shuffle(block_type1)
+            random.shuffle(block_type1)
         sublevel[1] = block_type1[0]
         sublevel[4] = block_type1[1]
         block_type11 = [BLOCK_SECOND, BLOCK_THIRD, BLOCK_FORTH]  # 地雷,球,挡板所允许的方块：

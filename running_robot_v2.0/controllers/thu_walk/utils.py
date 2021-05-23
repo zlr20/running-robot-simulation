@@ -59,13 +59,10 @@ def getImage(mCamera,mode='rgb'):
 '''
 加载关卡预训练模型
 '''
-if 1:
-	device = torch.device("cuda")
-else:
-	device = torch.device("cpu")
+device = torch.device("cpu")
 
 def load_model(model_path):
-	model = torch.load(model_path).to(device)
+	model = torch.load(model_path, map_location='cpu')
 	model.eval()
 	return model
 

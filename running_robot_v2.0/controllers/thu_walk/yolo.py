@@ -15,7 +15,7 @@ def load_yolo(model_path,class_names):
 	anchors = np.array(anchors).reshape([-1, 3, 2])[::-1,:,:].astype(np.float32)
 
 	yolonet = YoloBody(len(anchors[0]),len(class_names),backbone='mobilenetv1')
-	state_dict = torch.load(model_path)
+	state_dict = torch.load(model_path, map_location='cpu')
 	yolonet.load_state_dict(state_dict)
 	
 	yolonet = yolonet.to(device)

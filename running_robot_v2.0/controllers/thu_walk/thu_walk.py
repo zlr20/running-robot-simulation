@@ -16,6 +16,15 @@ import itertools
 from utils import *
 from yolo import *
 
+ball_color = 'green'
+color_dist = {'red': {'Lower': np.array([0, 60, 60]), 'Upper': np.array([6, 255, 255])},
+              'blue': {'Lower': np.array([100, 80, 46]), 'Upper': np.array([124, 255, 255])},
+              'green': {'Lower': np.array([35, 43, 35]), 'Upper': np.array([90, 255, 255])},
+              }
+point_size = 1
+point_color1 = (0, 0, 255)  # BGR
+point_color2 = (0, 255, 0)
+thickness = 4
 
 class Walk():
     def __init__(self):
@@ -70,9 +79,9 @@ class Walk():
         self.angle = np.array([0., 0., 0.])  # 角度， 由陀螺仪积分获得
         self.velocity = np.array([0., 0., 0.])  # 速度， 由加速度计积分获得
 
-    # 加载关卡1-7的预训练模型
-    # self.model1 = load_model('./pretrain/1.pth')
-    # self.model2 = load_model('./pretrain/2.pth')
+        # 加载关卡1-7的预训练模型
+        # self.model1 = load_model('./pretrain/1.pth')
+        self.model2 = load_model('./pretrain/2.pth')
 
     # 执行一个仿真步。同时每步更新机器人偏航角度。
     def myStep(self):
@@ -213,6 +222,7 @@ class Walk():
         self.setRotation(0)
         self.setRobotRun(speed)  # 保存原来的行进速度
 
+    
     def keyBoardControl(self, collet_data=False, rotation=True):
         self.isWalking = True
         ns = itertools.count(0)
@@ -224,7 +234,7 @@ class Walk():
             if collet_data and n % 53 == 0:
                 rgb_raw = getImage(self.mCamera)
                 print('save image')
-                cv2.imwrite('./tmp/c_' + str(n) + '.png', rgb_raw)
+                cv2.imwrite('./tmp/line_' + str(n) + '.png', rgb_raw)
             if key == 49:
                 pos = self.positionSensors[19].getValue()
                 self.motors[19].setPosition(np.clip(pos + 0.05, -0.25, 0.4))
@@ -403,7 +413,7 @@ class Walk():
     def stage4(self):
         print('########Stage4_Start########')
         # 调整头部位置，低下头看
-        self.setRobotRun(0.0)
+        # self.setRobotRun(-0.5)
         self.mGaitManager.stop()
         self.motors[19].setPosition(-0.3)
         # 重复50个空循环等待电机到位
@@ -451,42 +461,79 @@ class Walk():
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
 
-        self.setForwardSpeed(-0.05)
+        # 起身后转向90度，开始下一阶段任务
+        self.mGaitManager.start()
+        self.setRotation(20)
+        self.wait(1000)
+        self.setRotation(40)
+        self.wait(1000)
+        self.setRotation(80)
+        self.wait(1000)
+
+        # 抬头，准备对齐赛道
+        self.motors[19].setPosition(0.5)
         ns = itertools.count(0)
+        turn_flag = 0
+        count=0
         for n in ns:
-            if np.abs(self.angle[-1]) < 1.0:
-                rgb_raw = getImage(self.mCamera)
-                cv2.imwrite('./tmp/' + str(n) + '.png', rgb_raw)
+            action_flag = 0
+            if n%20==0:
+                rgb_raw = np.array(getImage(self.mCamera),dtype=np.uint8)
+                gs_frame = cv2.GaussianBlur(rgb_raw, (5, 5), 0) 
+                gray = cv2.cvtColor(gs_frame, cv2.COLOR_RGB2GRAY)
+                _, dst = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
+                dst=~dst
+                cnts = cv2.findContours(dst.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                
+                points =[]
+                if cnts:
+                    for cnt in cnts:
+                        rect = cv2.minAreaRect(cnt)
+                        box = cv2.boxPoints(rect)
+
+                        b = []
+                        for i in range(4):
+                            if box[i][1] >= 30:
+                                b.append(box[i])
+                        if b:
+                            if b[0][0]<=80:
+                                point = b[0] if b[0][0] > b[1][0] else b[1]
+                            else:
+                                point = b[1] if b[0][0] > b[1][0] else b[0]
+                            points.append(point)
+                        # cv2.circle(rgb_raw, (int(point[0]), int(point[1])), point_size, point_color1, thickness)
+                # cv2.imshow('img', rgb_raw)
+                # cv2.waitKey(0)
+                if len(points)==2:
+                    mid_x = (points[0][0]+points[1][0])/2
+                    mid_y = (points[0][1]+points[1][1])/2
+                    if turn_flag == 0:
+                        if mid_x < 75:
+                            self.turn_left(0.2)
+                            action_flag = 1
+                        if mid_x > 85:
+                            self.turn_right(0.2)
+                            action_flag = 1
+                        if mid_y >= 110 and turn_flag == 0:
+                            turn_flag = 1
+
+                if turn_flag == 1:
+                    count += 1
+                    if count == 600:
+                        break
+
+                if not action_flag:
+                    self.mGaitManager.setXAmplitude(0.8)  # 前进为0
+                    self.mGaitManager.setAAmplitude(0.0)  # 转体为0
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
-            if n == 1000:
-                break
-
-        # # 起身后转向90度，开始下一阶段任务
-        # self.mGaitManager.start()
-        # self.setRotation(20)
-        # self.wait(100)
-        # self.setRotation(40)
-        # self.wait(100)
-        # self.setRotation(80)
-        # self.wait(100)
-
-        # # 抬头，准备对齐赛道
-        # self.motors[19].setPosition(0.6)
-        # # 重复50个空循环等待电机到位
-        # ns = itertools.repeat(0,50000)
-        # for n in ns:
-        # 	self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-        # 	self.myStep()  # 仿真一个步长
         print('########Stage4_End########')
 
     # 过桥
     def stage5(self):
-        ball_color = 'green'
-        color_dist = {'red': {'Lower': np.array([0, 60, 60]), 'Upper': np.array([6, 255, 255])},
-                      'blue': {'Lower': np.array([100, 80, 46]), 'Upper': np.array([124, 255, 255])},
-                      'green': {'Lower': np.array([35, 43, 35]), 'Upper': np.array([90, 255, 255])},
-                      }
         ns = itertools.count(1)
         turn_flag = 0
         count = 0
@@ -496,7 +543,6 @@ class Walk():
             if n % 20 == 0:
                 # img processing
                 rgb_raw = getImage(self.mCamera)
-                rgb_raw = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2RGB)
                 hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
                 erode_hsv = cv2.erode(hsv, None, iterations=2)
                 inRange_hsv = cv2.inRange(erode_hsv, color_dist[ball_color]['Lower'], color_dist[ball_color]['Upper'])
@@ -542,11 +588,6 @@ class Walk():
 
     # 踢球进洞
     def stage6(self):
-        point_size = 1
-        point_color1 = (0, 0, 255)  # BGR
-        point_color2 = (0, 255, 0)
-        thickness = 4
-
         print('########Stage6_Start########')
         # self.mMotionManager.playPage(1)
         yolonet_ball, yolodecoders_ball = load_yolo('./pretrain/ball.pth', class_names=['ball', 'hole'])
@@ -563,7 +604,6 @@ class Walk():
             action_flag = 0
             if n % 2 == 0:
                 rgb_raw = getImage(self.mCamera)
-                rgb_raw = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2RGB)
                 res_ball = call_yolo(rgb_raw, yolonet_ball, yolodecoders_ball, class_names=['ball', 'hole'],
                                      confidence=0.8)
                 res_hole = call_yolo(rgb_raw, yolonet_hole, yolodecoders_hole, class_names=['ball', 'hole'],
@@ -751,21 +791,21 @@ class Walk():
         # 准备动作
         self.prepare(waitingTime=500)
 
-        # 通过第一关	上下开横杆
+        # 通过第一关 上下开横杆
         # self.stage1()
-        # 通过第二关	回字陷阱
+        # 通过第二关 回字陷阱
         # self.stage2()
-        # 通过第三关	地雷路段
+        # 通过第三关 地雷路段
         # self.stage3()
-        # 通过第四关	翻越障碍与过门
-        # self.stage4()
-        # 通过第五关	窄桥路段
-        self.stage5()
-        # 通过第六关	踢球进洞
-        self.stage6()
-        # 通过第七关	走楼梯
+        # 通过第四关 翻越障碍与过门
+        self.stage4()
+        # 通过第五关 窄桥路段
+        # self.stage5()
+        # 通过第六关 踢球进洞
+        # self.stage6()
+        # 通过第七关 走楼梯
         # self.stage7()
-        # 通过第八关	水平开横杆
+        # 通过第八关 水平开横杆
         # self.stage8()
         # 键盘控制与采集数据
         # self.keyBoardControl(collet_data=0,rotation=1)
