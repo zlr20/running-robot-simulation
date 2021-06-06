@@ -1,20 +1,52 @@
 # -*- coding: UTF-8 -*-
-from controller import Robot, Motion
+# 清华大学Thu-bot队仿真赛代码
+# 在本代码中我们定义关卡编号如下：1-上下开合横杆 2-回字陷阱 3-地雷路段 4-翻越障碍物 5-窄桥 6-踢球进洞 7-阶梯 8-水平开合横杆 9-窄门
+
+# 系统库
 import os
 import sys
-
-libraryPath = os.path.join(os.environ.get("WEBOTS_HOME"), 'projects', 'robots', 'robotis', 'darwin-op', 'libraries',
-                           'python37')
+import time
+from math import radians
+import itertools
+from typing import Tuple
+libraryPath = os.path.join(os.environ.get("WEBOTS_HOME"), 'projects', 'robots', 'robotis', 'darwin-op', 'libraries','python37')
 libraryPath = libraryPath.replace('/', os.sep)
 sys.path.append(libraryPath)
 from managers import RobotisOp2GaitManager, RobotisOp2MotionManager
+from controller import Robot, Motion
 
-import cv2
+# 第三方库
 import numpy as np
-from math import radians
-import itertools
+import cv2
+import torch
+import torchvision
+
+# 自编写库
 from utils import *
-from yolo import *
+
+# 赛道路面材料和对应可能出现的关卡
+raceTrackInfo = [
+    {'material':'草地','possible_stage':[1],'hsv':{'low':[20,100,100],'high':[55,200,200]}},
+    {'material':'灰色','possible_stage':[3,9,6],'hsv':{'low':[35,0,150],'high':[40,20,255]}},
+    {'material':'黄色砖块','possible_stage':[3,9,7,6],'hsv':{'low':[15,100,50],'high':[34,255,255]}}, # 楼梯前也是砖块
+    {'material':'绿色','possible_stage':[2,5],'hsv':{'low':[35, 43, 35],'high':[90, 255, 255]}},
+    {'material':'白色','possible_stage':[3,9,6],'hsv':{'low':[10, 5, 200],'high':[30, 30, 255]}},
+    {'material':'蓝色碎花','possible_stage':[8],'hsv':{'low':[100, 10, 100],'high':[150, 80, 200]}},
+]
+
+# 注意有三关会随机交换赛道材料，分别是地雷、门和踢球
+stageInfo = {
+    1 : {'name':'上下开合横杆','trackInfo':[raceTrackInfo[0]]}, 
+    2 : {'name':'回字陷阱','trackInfo':[raceTrackInfo[3]]}, 
+    3 : {'name':'地雷路段','trackInfo':[raceTrackInfo[1],raceTrackInfo[2],raceTrackInfo[4]]}, 
+    4 : {'name':'翻越障碍','trackInfo':[]}, 
+    5 : {'name':'窄桥','trackInfo':[raceTrackInfo[3]]}, 
+    6 : {'name':'踢球','trackInfo':[raceTrackInfo[1],raceTrackInfo[2],raceTrackInfo[4]]}, 
+    7 : {'name':'楼梯','trackInfo':[raceTrackInfo[2]]}, 
+    8 : {'name':'水平开合横杆','trackInfo':[raceTrackInfo[5]]}, 
+    9 : {'name':'窄门','trackInfo':[raceTrackInfo[1],raceTrackInfo[2],raceTrackInfo[4]]}, 
+}
+
 
 
 class Walk():
@@ -27,8 +59,6 @@ class Walk():
         self.EyeLed.set(0xa0a0ff)  # 点亮眼部LED灯并设置一个颜色
         self.mAccelerometer = self.robot.getDevice('Accelerometer')  # 获取加速度传感器
         self.mAccelerometer.enable(self.mTimeStep)  # 激活传感器，并以mTimeStep为周期更新数值
-        self.fup = 0
-        self.fdown = 0  # 定义两个类变量，用于之后判断机器人是否摔倒
 
         self.mGyro = self.robot.getDevice('Gyro')  # 获取陀螺仪
         self.mGyro.enable(self.mTimeStep)  # 激活陀螺仪，并以mTimeStep为周期更新数值
@@ -70,112 +100,50 @@ class Walk():
         self.angle = np.array([0., 0., 0.])  # 角度， 由陀螺仪积分获得
         self.velocity = np.array([0., 0., 0.])  # 速度， 由加速度计积分获得
 
-    # 加载关卡1-7的预训练模型
-    
-    # self.model2 = load_model('./pretrain/2.pth')
+        # 剩余关卡
+        self.stageLeft = {1,2,3,5,6,7,8,9}
+        # 当前关卡，默认第一关
+        self.stageNow = 1
+        # 这关之后有蓝色障碍物
+        self.obstacleBehind = 0
+        # 当前道路材料，默认草地
+        self.materialInfo = {'material':'草地','possible_stage':[1],'hsv':{'low':[20,100,100],'high':[55,200,200]}}
+        # 已经转弯的次数
+        self.turnCount = 0
 
-    # 执行一个仿真步。同时每步更新机器人偏航角度。
+
+    # 执行一个仿真步，同时每步更新机器人RPY角度
     def myStep(self):
+        #print(self.angle[-1])
         ret = self.robot.step(self.mTimeStep)
         self.angle = updateAngle(self.angle, self.mTimeStep, self.mGyro)
         if ret == -1:
             exit(0)
-
-    # 保持动作若干ms
-    def wait(self, ms):
+    
+    # 输入为等待毫秒数，使机器人等待一段时间
+    def wait(self, ms):  
         startTime = self.robot.getTime()
-        s = ms / 1000.0
-        while s + startTime >= self.robot.getTime():
+        s = ms / 1000.0  
+        while (s + startTime >= self.robot.getTime()):  
             self.myStep()
 
     # 设置前进、水平、转动方向的速度指令，大小在-1到1之间。
-    # 硬更新，不建议直接使用
-    def setMoveCommand(self, vX=None, vY=None, vA=None):
-        if vX != None:
-            self.vX = np.clip(vX, -1, 1)
-            self.mGaitManager.setXAmplitude(self.vX)  # 设置x向速度（直线方向）
-        if vY != None:
-            self.vY = np.clip(vY, -1, 1)
-            self.mGaitManager.setYAmplitude(self.vY)  # 设置y向速度（水平方向）
-        if vA != None:
-            self.vA = np.clip(vA, -1, 1)
-            self.mGaitManager.setAAmplitude(self.vA)  # 设置转动速度
-
-    # 设置前进速度，软更新 v = (1-α)*v + α*Target
-    def setForwardSpeed(self, target, threshold=0.05, tau=0.1):
-        current = self.vX
-        target = np.clip(target, -1, 1)
-        while np.abs(current - target) > threshold:
-            current = (1 - tau) * current + tau * target
-            self.setMoveCommand(vX=current)
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-        self.setMoveCommand(vX=target)
-        self.mGaitManager.step(self.mTimeStep)
-        self.myStep()
-
-    # 设置侧向速度，软更新 v = (1-α)*v + α*Target
-    def setSideSpeed(self, target, threshold=0.05, tau=0.1):
-        current = self.vY
-        target = np.clip(target, -1, 1)
-        while np.abs(current - target) > threshold:
-            current = (1 - tau) * current + tau * target
-            self.setMoveCommand(vY=current)
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-        self.setMoveCommand(vY=target)
-        self.mGaitManager.step(self.mTimeStep)
-        self.myStep()
-
-    # 设置转动速度，软更新 v = (1-α)*v + α*Target
-    def setRotationSpeed(self, target, threshold=0.05, tau=0.1):
-        current = self.vA
-        target = np.clip(target, -1, 1)
-        while np.abs(current - target) > threshold:
-            current = (1 - tau) * current + tau * target
-            self.setMoveCommand(vA=current)
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-        self.setMoveCommand(vA=target)
-        self.mGaitManager.step(self.mTimeStep)
-        self.myStep()
-
-    # 通过PID控制机器人转体到target角度
-    def setRotation(self, target, threshold=0.5, Kp=0.1):
-        self.setForwardSpeed(0.)
-        self.setSideSpeed(0.)
-        self.setRotationSpeed(0.)
-
-        while np.abs(self.angle[-1] - target) > threshold:
-            u = Kp * (target - self.angle[-1])
-            u = np.clip(u, -1, 1)
-            self.setMoveCommand(vA=u)
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-
-        self.setForwardSpeed(0.)
-        self.setSideSpeed(0.)
-        self.setRotationSpeed(0.)
-        return self.angle[-1]
-
-    def setRobotStop(self):
-        self.setForwardSpeed(0.)
-        self.setSideSpeed(0.)
-        self.setRotationSpeed(0.)
-
-    def setRobotRun(self, speed=1.):
-        self.setForwardSpeed(speed)
-        self.setSideSpeed(0.)
-        self.setRotationSpeed(0.)
+    def setMoveCommand(self, vX=0., vY=0., vA=0.):
+        self.vX = np.clip(vX, -1, 1)
+        self.mGaitManager.setXAmplitude(self.vX)  # 设置x向速度（直线方向）
+        self.vY = np.clip(vY, -1, 1)
+        self.mGaitManager.setYAmplitude(self.vY)  # 设置y向速度（水平方向）
+        self.vA = np.clip(vA, -1, 1)
+        self.mGaitManager.setAAmplitude(self.vA)  # 设置转动速度
 
     # 检查偏航是否超过指定threshold，若是则修正回0°附近，由eps指定
-    def checkIfYaw(self, threshold=7.5, eps=0.25):
+    def checkIfYaw(self, threshold=7.5, eps=1,initAngle=0):
         if np.abs(self.angle[-1]) > threshold:
             print('Current Yaw is %.3f, begin correction' % self.angle[-1])
             while np.abs(self.angle[-1]) > eps:
                 u = -0.02 * self.angle[-1]
                 u = np.clip(u, -1, 1)
-                self.setMoveCommand(vA=u)
+                self.setMoveCommand(vX=self.vX,vA=u)
                 self.mGaitManager.step(self.mTimeStep)
                 self.myStep()
             print('Current Yaw is %.3f, finish correction' % self.angle[-1])
@@ -183,36 +151,21 @@ class Walk():
             pass
 
     # 比赛开始前准备动作，保持机器人运行稳定和传感器读数稳定
-    def prepare(self, waitingTime):
-        print('########Preparation_Start########')
+    def prepare(self):
         # 仿真一个步长，刷新传感器读数
         self.robot.step(self.mTimeStep)
         # 准备动作
-        print('Preparing...')
         self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
-        #self.wait(500)
+        self.wait(200)
         # 开始运动
         self.mGaitManager.setBalanceEnable(True)
         self.mGaitManager.start()
-        self.setRobotStop()
-        self.wait(waitingTime)
-        print('Ready to Play!')
-        print('########Preparation_End########')
+        self.wait(200)
+        self.setMoveCommand(vX=0., vY=0., vA=0.)
+        print('~~~~~~~~~~~准备就绪~~~~~~~~~~~')
 
-    # 构造Z字轨迹
-    def Z(self, angle, interval):
-        speed = self.vX
-        # 左转45度
-        self.setRotation(angle)
-        self.setForwardSpeed(speed)
-        ns = itertools.repeat(0, interval)
-        for n in ns:
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-        self.setRotation(0)
-        self.setRobotRun(speed)  # 保存原来的行进速度
-
-    def keyBoardControl(self, collet_data=False, rotation=True):
+    # 键盘控制程序
+    def keyBoardControl(self, collet_data=1, rotation=False):
         self.isWalking = True
         ns = itertools.count(0)
         for n in ns:
@@ -220,10 +173,10 @@ class Walk():
             self.mGaitManager.setAAmplitude(0.0)  # 转体为0
             key = 0  # 初始键盘读入默认为0
             key = self.mKeyboard.getKey()  # 从键盘读取输入
-            if collet_data and n % 53 == 0:
+            if collet_data and n % 33 == 0:
                 rgb_raw = getImage(self.mCamera)
-                print('save image')
-                cv2.imwrite('./tmp/c_' + str(n) + '.png', rgb_raw)
+                fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+                cv2.imwrite('./tmp/' + fname + '.png', rgb_raw)
             if key == 49:
                 pos = self.positionSensors[19].getValue()
                 print(f'Head Pos: {pos}')
@@ -277,12 +230,13 @@ class Walk():
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
 
-    # 水平开合横杆
+    # 上下开合横杆（成功率100%）
     def stage1(self):
-        print('########Stage1_Start########')
+        print("~~~~~~~~~~~上下横杆关开始~~~~~~~~~~~")
         stage1model = load_model('./pretrain/1.pth')
         crossBarDownFlag = False
         goFlag = False
+        # 判断何时启动
         ns = itertools.count(0)
         for n in ns:
             self.checkIfYaw()
@@ -292,458 +246,1254 @@ class Walk():
                 if not crossBarDownFlag:
                     if pred == 1:
                         crossBarDownFlag = True
-                        print('CrossBar already Down with probablity %.3f' % prob)
+                        print('横杆已经落下，判别概率为%.3f' % prob)
                     else:
-                        print('Wait for CrossBar Down with probablity %.3f ...' % prob)
+                        print('横杆已经打开，判别概率为%.3f，但需要等待横杆落下先' % prob)
                 else:
                     if pred == 0:
                         goFlag = True
-                        print('CrossBar already UP with probablity %.3f, Go Go Go!' % prob)
+                        print('横杆已经打开，判别概率为%.3f，机器人启动' % prob)
                     else:
-                        print('Wait for CrossBar Up with probablity %.3f ...' % prob)
+                        print('横杆已经落下，判别概率为%.3f' % prob)
             if goFlag:
-                self.setRobotRun()
-                # self.motors[18].setPosition(radians(50))
-                self.motors[19].setPosition(radians(0))
-                break
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
-        n0 = n
-        for n in ns:
-            self.checkIfYaw()
-            # 持续走一段时间，写死了这里
-            if (n - n0) >= 850:
+                self.setMoveCommand(vX = 1.)
                 break
             self.mGaitManager.step(self.mTimeStep)
             self.myStep()
         del stage1model
-        print('########Stage1_End########')
 
-    # 回字陷阱
-    def stage2(self):
-        print('########Stage2_Start########')
-        self.setRobotStop()
-        stage2model = load_model('./pretrain/2.pth')
-        self.checkIfYaw(threshold=3.0)
+        # 走完第一关
+        self.motors[19].setPosition(-0.2)
         ns = itertools.count(0)
-        center_y, center_x = None, None
         for n in ns:
+            # 调角速度，保持垂直。这里没有用checkIfYaw，虽然功能相同，但是后者占用的mystep没有计数。
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0 and np.abs(self.angle[0]) < 1.0 and np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                # 判定关卡结束条件，当前材料的hsv基本消失在视野中下段。或者行进步数超限1000。
+                if num < 500 or n > 1000:
+                    break
+        self.stageLeft.remove(1)
+        print("~~~~~~~~~~~上下横杆关结束~~~~~~~~~~~")
+
+    # 回字陷阱，这版没有用神经网络，纯图像处理，更稳定。（成功率100%）
+    def stage2(self):
+        print("~~~~~~~~~~~回字陷阱关开始~~~~~~~~~~~") 
+        ## 方案一：写死，先走两步，确保进入回字，然后转向90，走到边缘，再转回来。
+        # self.setMoveCommand(vX=0.)
+        # self.checkIfYaw(threshold=3.0)
+        # self.setMoveCommand(vX=1.)
+        # ns = itertools.repeat(0,400)
+        # for n in ns:
+        #     self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+        #     self.myStep()  # 仿真一个步长
+        # self.setMoveCommand(vX=0.)
+        ## 方案二：动态控制第一次转向，回字离视野底部较近时转向90
+        self.motors[19].setPosition(-0.1)
+        self.setMoveCommand(vX=1.0)
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.1)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                mask = 255 - mask
+                contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                turnFlag = False
+                # 由于视野较低，回字出现的特点是，很扁的长方形。当长方形最低点来到视野中间时，可以转向。
+                for contour in contours:
+                    x,y,w,h = cv2.boundingRect(contour)
+                    if w >= 0.7*h and y + h > 30:
+                        turnFlag = True
+                if turnFlag:break
+
+        # 向右转向90,走到边缘
+        ns = itertools.count(0)
+        #self.setMoveCommand(vX=1.)
+        for n in ns:
+            u = -0.02 * (self.angle[-1]+90)
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
             if n % 5 == 0:
                 rgb_raw = getImage(self.mCamera)
-                binary = call_segmentor(rgb_raw, stage2model)
-                trap = np.argwhere(binary == 255)
-                tmp_y, tmp_x = np.mean(trap, axis=0)
-                if not center_y and not center_x:
-                    center_y, center_x = tmp_y, tmp_x
-                else:
-                    center_y = 0.9 * center_y + 0.1 * tmp_y
-                    center_x = 0.9 * center_x + 0.1 * tmp_x
-            if center_x < 75:
-                self.setSideSpeed(0.5)
-                self.checkIfYaw(threshold=3.0)
-            elif center_x > 85:
-                self.setSideSpeed(-0.5)
-                self.checkIfYaw(threshold=3.0)
-            else:
-                self.setSideSpeed(0.)
-                self.checkIfYaw(threshold=3.5)
-                print('Align Trap CenterX : %d CenterY : %d' % (center_x, center_y))
-                break
-            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-            self.myStep()  # 仿真一个步长
-
-        self.setRobotRun()
-        self.Z(angle=45, interval=275)
-        ns = itertools.repeat(0, 500)
-        for n in ns:
-            self.checkIfYaw(threshold=3.0)
-            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-            self.myStep()  # 仿真一个步长
-        self.setRobotRun(0.5)
-        self.Z(angle=-45, interval=500)
-        del stage2model
-        print('########Stage2_End########')
-
-    # 地雷路段
-    def stage3(self):
-        print('########Stage3_Start########')
-        self.setRobotRun(1.0)
-        self.motors[19].setPosition(radians(0))
-        yolonet, yolodecoders = load_yolo('./pretrain/3.pth', class_names=['dilei'])
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                #看不到绿色，即走到边缘
+                if num < 20:
+                    break
+        # 回正
+        self.setMoveCommand(vX=0.)
+        self.checkIfYaw()
+        # 向前走，走完窄路
+        headpos = 0.4
+        self.motors[19].setPosition(headpos)
         ns = itertools.count(0)
         for n in ns:
-            if n % 5 == 0 and np.abs(self.angle[0]) < 1.0:
-                rgb_raw = getImage(self.mCamera)
-                # cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
-                res = call_yolo(rgb_raw, yolonet, yolodecoders, class_names=['dilei'])
-                if not res:
-                    print('%d Mine(s) has been Detected' % len(res))
-                # 只看视野一定范围内的地雷，过远的忽略
-                centers = []
-                for info in res:
-                    top, left, down, right = info['bbox']
-                    centers.append([(left + right) / 2, (top + down) / 2])
-                centers = [center for center in centers if center[1] > 0.5 * self.mCameraHeight]
-                if not centers:
-                    pass
-                else:
-                    # 看一下地雷距离视野中轴线的水平距离，判定危险级
-                    danger = [center[0] - self.mCameraWidth / 2 for center in centers]
-                    danger = sorted(danger, key=lambda x: np.abs(x))
-                    if np.abs(danger[0]) < 45:
-                        print('Warning!')
-                        # self.Z(0,interval=20)
-                        if len(danger) == 1:
-                            self.Z(30, interval=200) if danger[0] >= 0 else self.Z(-45, interval=100)
-                        else:
-                            self.Z(30, interval=200) if danger[1] >= 0 else self.Z(-45, interval=100)
-                    else:
-                        pass
-            self.checkIfYaw(threshold=5.)
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
-        print('########Stage3_End########')
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()-headpos)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                # 只看右侧一半，防止下一关是绿色窄桥造成干扰
+                # fix the bug : 一半还是有可能看见绿色窄桥，故再加20
+                mask=cv2.inRange(hsv[self.mCameraHeight//2+20:,self.mCameraWidth//2:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                # cv2.imshow('mask',mask)
+                # cv2.waitKey(0)
+                if num < 50 or n >= 330:
+                    print(f'走了{n}步') # 限制在330
+                    break
+        cv2.imwrite('log/keySteps/2窄桥上决策rgb.png',rgb_raw)
+        cv2.imwrite('log/keySteps/2窄桥上决策mask一半.png',mask)
+        # 走完摘路后先判断一下，前面是不是窄桥，若是，则写死多少步停。否则可以根据绿色动态停。
+        mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+        cv2.imwrite('log/keySteps/2窄桥上决策mask.png',mask)
+        road = np.where(mask==255)[0]
+        num = len(road)
+        if num < 1500:
+            print('下一关不是窄桥，执行动态出关程序')
+            # 向左转向60前进，动态停
+            self.motors[18].setPosition(-radians(30))
+            self.motors[19].setPosition(-0.1)
+            ns = itertools.count(0)
+            for n in ns:
+                u = -0.02 * (self.angle[-1]-30)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.,vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+                if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.1)<0.05 and np.abs(self.positionSensors[18].getValue()+radians(30))<0.05:
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = self.materialInfo['hsv']['low']
+                    high = self.materialInfo['hsv']['high']
+                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    # cv2.imshow('image',mask)
+                    # cv2.waitKey(0)
+                    if num < 50 and n > 200:
+                        cv2.imwrite('log/keySteps/2出回字时rgb.png',rgb_raw)
+                        cv2.imwrite('log/keySteps/2出回字时mask.png',mask)
+                        break
+        else:
+            # 向右转向45前进，写死停
+            print('下一关是窄桥，执行固定步长出关程序')
+            while np.abs(self.angle[-1]-45) > 1:
+                u = -0.02 * (self.angle[-1]-45)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.,vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+        self.setMoveCommand(vX=0.)
+        self.motors[18].setPosition(0)
+        self.motors[19].setPosition(0)
+        self.checkIfYaw(threshold=3.0)
+        self.stageLeft.remove(2)
+        print("~~~~~~~~~~~回字陷阱关结束~~~~~~~~~~~")
 
+    # 地雷路段，没有用神经网络，纯图像处理，更稳定。（成功率>90%）
+    def stage3(self):
+        print("~~~~~~~~~~~地雷关开始~~~~~~~~~~~")
+        self.motors[19].setPosition(-0.2)
+        self.setMoveCommand(vX=1.0)
+        state = '正常行走状态' # -> '避雷转弯状态' -> '避雷斜走状态'  状态转换机
+        turnRightCount = 0 # 记录向右转的次数，向左右的次数最好均衡
+        ns = itertools.count(0)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if state == '避雷行走状态':
+                count += 1
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                low =  [0,0,15]
+                high = [255,255,255]
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                mask = 255 - mask
+                contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                dilei = []
+                for contour in contours:
+                    if cv2.contourArea(contour) > 5:
+                        M = cv2.moments(contour)  # 计算第一条轮廓的各阶矩,字典形式
+                        center_x = int(M["m10"] / M["m00"])
+                        center_y = int(M["m01"] / M["m00"])
+                        if 25 < center_x < 135 and center_y > 75 and state=='正常行走状态':
+                            dilei.append((center_x,center_y))
+                        elif 20 < center_x < 140 and center_y > 60 and state=='避雷转弯状态':
+                            dilei.append((center_x,center_y))
+                        elif 30 < center_x < 130 and center_y > 80 and state=='避雷行走状态':
+                            dilei.append((center_x,center_y))
+
+                #print(state)
+                #cv2.imshow('image',mask)
+                #cv2.waitKey(0)
+                if state == '正常行走状态':
+                    # 在正常行走状态下，有雷则要么需要后退，要么需要转向
+                    if len(dilei):
+                        dilei = sorted(dilei,key = lambda x:x[1],reverse=True)
+                        # 第一种情况，常发生在转弯之后，面前的雷离我们太近，直接转弯会撞到，必须要退一段
+                        if dilei[0][1] > 100:
+                            u = -0.02 * (self.angle[-1])
+                            u = np.clip(u, -1, 1)
+                            self.setMoveCommand(vX=-1.0,vA=u)
+                            continue
+                        # 否则判断转向哪里
+                        else:
+                            # 前方有地雷必须转弯，则扭头看一看左右距离道路边缘情况，再决定往哪里转
+                            self.setMoveCommand(vX=0.0)
+                            # 左边的路面情况
+                            self.motors[18].setPosition(radians(90))
+                            while True:
+                                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                                self.myStep()  # 仿真一个步长
+                                self.checkIfYaw()
+                                if np.abs(self.positionSensors[18].getValue()-radians(90))<0.05:
+                                    leftImg = getImage(self.mCamera)
+                                    low = self.materialInfo['hsv']['low']
+                                    high = self.materialInfo['hsv']['high']
+                                    lefthsv = cv2.cvtColor(leftImg,cv2.COLOR_BGR2HSV)
+                                    leftMask=cv2.inRange(lefthsv,np.array(low),np.array(high))
+                                    leftMask = cv2.medianBlur(leftMask,3)
+                                    if len(np.where(leftMask==255)[0]):
+                                        leftValue = 120 - min(np.where(leftMask==255)[0])
+                                    else:
+                                        leftValue = 1
+                                    break
+                            self.motors[18].setPosition(radians(-90))
+                            while True:
+                                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                                self.myStep()  # 仿真一个步长
+                                self.checkIfYaw()
+                                if np.abs(self.positionSensors[18].getValue()+radians(90))<0.05:
+                                    rightImg = getImage(self.mCamera)
+                                    low = self.materialInfo['hsv']['low']
+                                    high = self.materialInfo['hsv']['high']
+                                    righthsv = cv2.cvtColor(rightImg,cv2.COLOR_BGR2HSV)
+                                    rightMask=cv2.inRange(righthsv,np.array(low),np.array(high))
+                                    rightMask = cv2.medianBlur(rightMask,3)
+                                    if len(np.where(rightMask==255)[0]):
+                                        rightValue = 120 - min(np.where(rightMask==255)[0])
+                                    else:
+                                        rightValue = 1
+                                    break
+                            ratio = leftValue / (leftValue + rightValue)
+                            # cv2.imshow('left',leftMask)
+                            # cv2.imshow('right',rightMask)
+                            # cv2.waitKey(0)
+
+                            # 视角回正
+                            self.motors[18].setPosition(radians(0))
+                            while True:
+                                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                                self.myStep()  # 仿真一个步长
+                                self.checkIfYaw()
+                                if np.abs(self.positionSensors[18].getValue())<0.05:
+                                    break
+                            if ratio<0.3:
+                                cv2.imwrite('log/keySteps/3地雷只能右转正视角mask.png',rgb_raw)
+                                cv2.imwrite('log/keySteps/3地雷只能右转正视角rgb.png',mask)
+                                cv2.imwrite('log/keySteps/3地雷只能右转左视角mask.png',leftMask)
+                                cv2.imwrite('log/keySteps/3地雷只能右转左视角rgb.png',leftImg)
+                                cv2.imwrite('log/keySteps/3地雷只能右转右视角mask.png',rightMask)
+                                cv2.imwrite('log/keySteps/3地雷只能右转右视角rgb.png',rightImg)
+                                turnFlag = 'right'
+                                print('不允许左转')
+                            # 不管雷哪，道路不允许右转，则只能左转
+                            elif ratio>0.7:
+                                cv2.imwrite('log/keySteps/3地雷只能左转正视角mask.png',rgb_raw)
+                                cv2.imwrite('log/keySteps/3地雷只能左转正视角rgb.png',mask)
+                                cv2.imwrite('log/keySteps/3地雷只能左转左视角mask.png',leftMask)
+                                cv2.imwrite('log/keySteps/3地雷只能左转左视角rgb.png',leftImg)
+                                cv2.imwrite('log/keySteps/3地雷只能左转右视角mask.png',rightMask)
+                                cv2.imwrite('log/keySteps/3地雷只能左转右视角rgb.png',rightImg)
+                                turnFlag = 'left'
+                                print('不允许右转')
+                            elif 70<dilei[0][0]< 90 and turnRightCount <= -1:
+                                turnFlag = 'right'
+                                print('之前左转次数多，右转')
+                            elif 70<dilei[0][0]< 90 and turnRightCount >= 1:
+                                turnFlag = 'left'
+                                print('之前右转次数多，左转')
+                            elif dilei[0][0] < 80:
+                                turnFlag = 'right'
+                                print('地雷在左，右转')
+                            else:
+                                turnFlag = 'left'
+                                print('地雷在右，左转')
+
+                        if turnFlag == 'left':
+                            turnRightCount -= 1
+                            self.setMoveCommand(vA=1.0)
+                        elif turnFlag == 'right':
+                            turnRightCount += 1
+                            self.setMoveCommand(vA=-1.0)
+                        state = '避雷转弯状态'
+                
+                    # 正常行走状态下，若视野无雷，则继续走，并判别关卡结束状态
+                    else:
+                        u = -0.02 * (self.angle[-1])
+                        u = np.clip(u, -1, 1)
+                        self.setMoveCommand(vX=1.0,vA=u)
+                        # 若本关后接高障碍物，则进stage4()
+                        if self.obstacleBehind:
+                            ob_x, ob_y = obstacleDetect(rgb_raw)
+                            if ob_y > 40:
+                                #print(ob_y)
+                                self.stage4()
+                        # 若本关后无障碍物，则正常结束
+                        elif self.materialInfo['material'] == '黄色砖块':
+                            if self.checkIfPassBrick(rgb_raw): break
+                        else:
+                            hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                            low = self.materialInfo['hsv']['low']
+                            high = self.materialInfo['hsv']['high']
+                            mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                            road = np.where(mask==255)[0]
+                            num = len(road)
+                            if num < 250: break
+
+                elif state == '避雷转弯状态':
+                    if np.abs(self.angle[-1])<20:
+                        continue # 最少转20度再看
+                    elif len(dilei):
+                        if turnFlag == 'left':
+                            self.setMoveCommand(vA=1.0)
+                        elif turnFlag == 'right':
+                            self.setMoveCommand(vA=-1.0)
+                    else:
+                        # cv2.imshow('wulei',mask)
+                        # cv2.imshow('wulei2',rgb_raw)
+                        # cv2.waitKey(0)
+                        self.setMoveCommand(vX=1.0,vA=0.0) # 斜向走，避雷
+                        state = '避雷行走状态'
+                        count = 0
+                
+                else:# '避雷行走状态'
+                    # 避雷斜向走过程中遇到雷，停
+                    if len(dilei) or count >= 250:
+                        self.setMoveCommand(vX=0.0)
+                        self.checkIfYaw(eps=5)
+                        state = '正常行走状态'
+                        if len(dilei):
+                            print('停止避雷行走，原因是前方有雷')
+                        else:
+                            print('停止避雷行走，原因是达到上限')
+
+        self.stageLeft.remove(3)
+        
     # 翻越障碍
     def stage4(self):
         print('########Stage4_Start########')
         # 调整头部位置，低下头看
-        self.setRobotRun(0.0)
-        self.mGaitManager.stop()
         self.motors[19].setPosition(-0.3)
-        # 重复50个空循环等待电机到位
-        ns = itertools.repeat(0, 50)
-        for n in ns:
-            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-            self.myStep()  # 仿真一个步长
-        # rgb_raw = getImage(self.mCamera)
-        # cv2.imwrite('./tmp/'+str(n)+'.png',rgb_raw)
-
-        self.mGaitManager.start()
-        self.setRobotRun(1.0)
+        self.setMoveCommand(vX=0.5,vY=0.,vA=0.)
         ns = itertools.count(0)
         for n in ns:
             self.checkIfYaw()
-            if np.abs(self.angle[0]) < 1.0:
+            if np.abs(self.angle[0]) < 1.0 and np.abs(self.positionSensors[19].getValue()+0.3)<0.05:
                 rgb_raw = getImage(self.mCamera)
                 ob_x, ob_y = obstacleDetect(rgb_raw)
                 if ob_y > 0:
-                    self.setRobotRun(0.5)  # 看到蓝色障碍物注意减速
-                if ob_y > 75:  # 蓝色障碍物出现在正确位置，跳出循环，准备空翻
+                    self.setMoveCommand(vX=0.5,vY=0.,vA=0.)  # 看到蓝色障碍物注意减速
+                if ob_y > 80:  # 蓝色障碍物出现在正确位置，跳出循环，准备空翻
+                    self.setMoveCommand(vX=0.,vY=0.,vA=0.)
                     break
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
+        self.setMoveCommand(vX=0.5,vY=0.,vA=0.)
+        while True:
+            self.checkIfYaw()
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.angle[0]) < 0.1: break # 我发现，急停跌倒的原因是，钟摆很大时，突然让他停。应该等他回到中间位置，再停。
+        self.mMotionManager.playPage(9)
 
-        # 空翻与起身
+        stepMotion = Motion('motion/stair_duidui.motion')
+        stepMotion.setLoop(False)
+        for i in range(4):
+            stepMotion.play()
+            while not stepMotion.isOver():
+                self.myStep()
+        stepMotion = Motion('motion/stair_fandui.motion')
+        stepMotion.setLoop(False)
+        for i in range(4):
+            stepMotion.play()
+            while not stepMotion.isOver():
+                self.myStep()
+        # # 空翻与起身
         self.mMotionManager.playPage(1)
         self.mGaitManager.stop()
-        rollMotion = Motion('./motion/roll.motion')
+        rollMotion = Motion('./motion/roll(special).motion')
         rollMotion.setLoop(False)
         rollMotion.play()
         while not rollMotion.isOver():
             self.myStep()
+        self.mMotionManager.playPage(9)
         self.mMotionManager.playPage(11)
         self.mMotionManager.playPage(9)
+        print(self.angle)
+        while True:
+            self.mMotionManager.playPage(1)
+            self.mGaitManager.stop()
 
-        # 转向，向左转，注意按条件终止
-        self.setForwardSpeed(0.)
-        self.setSideSpeed(0.)
-        self.setRotationSpeed(0.)
-        self.mGaitManager.start()
+
+        # # 转向，向左转，注意按条件终止
+        # self.setMoveCommand(vX=0.,vY=0.,vA=0.)
+        # self.mGaitManager.start()
+        # ns = itertools.count(0)
+        # for n in ns:
+        #     if n % 2 == 0 and n > 100:
+        #         rgb_raw = getImage(self.mCamera)
+        #         k = cornerTurn(rgb_raw)
+        #         if np.abs(k) < 0.1:
+        #             self.setMoveCommand(vA=0.0)
+        #             self.mGaitManager.step(self.mTimeStep)
+        #             self.myStep()
+        #             break
+        #     else:
+        #         self.setMoveCommand(vA=1.0)
+        #         self.mGaitManager.step(self.mTimeStep)
+        #         self.myStep()
+
+        # # 陀螺仪累计数据全部清空
+        # self.angle = np.array([0., 0., 0.])
+        # self.mMotionManager.playPage(9)
+        # self.mGaitManager.start()
+        # for i in range(50):
+        #     self.checkIfYaw()
+        #     self.mGaitManager.step(self.mTimeStep)
+        #     self.myStep()
+        # self.mGaitManager.stop()
+        # for i in range(200):
+        #     self.mGaitManager.step(self.mTimeStep)
+        #     self.myStep()
+        # self.angle = np.array([0., 0., 0.])
+        # self.mGaitManager.start()
+        # self.mGaitManager.step(self.mTimeStep)
+        # self.myStep()
+        # while 1:
+        #     self.checkIfYaw()
+        #     self.mGaitManager.step(self.mTimeStep)
+        #     self.myStep()
+        print('########Stage4_End########')
+
+    # 过门（成功率90%）
+    def stage9(self):
+        print("~~~~~~~~~~~窄门关开始~~~~~~~~~~~")
+        # 向右转向90,走到边缘
+        self.motors[19].setPosition(-0.1)
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1]+90)
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                if num < 20:
+                    break
+        # 回正，正好配准右侧柱子
+        self.setMoveCommand(vX=0.)
+        self.checkIfYaw(eps=5)
+
+        # 继续向前走，配准右侧柱子停下位置
+        headpos = -0.2
+        self.motors[19].setPosition(headpos)
+        self.setMoveCommand(vX=1.0,vA=0.0)
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()-headpos)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                low =  [0,0,15]
+                high = [255,255,255]
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                mask = 255 - mask
+                contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                # 视野里有黑色柱子，则按从左到右顺序排序
+                if len(contours):
+                    contours = sorted(contours,key=lambda cnt : tuple(cnt[cnt[:,:,0].argmin()][0])[0])
+                    cnt = contours[0] # 优先取左边那个
+                    bottommost=tuple(cnt[cnt[:,:,1].argmax()][0]) # 计算最下点
+                    if bottommost[1] > 30 :
+                        break
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+        
+        # 然后斜走，配准第二根柱子（左侧）停下的位置
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1]-45)
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()-headpos)<0.05 and np.abs(self.angle[-1]-45) < 10:
+                rgb_raw = getImage(self.mCamera)
+                low =  [0,0,15]
+                high = [255,255,255]
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                mask = 255 - mask
+                contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                # 视野里有黑色柱子，则按从左到右顺序排序
+                if len(contours):
+                    contours = sorted(contours,key=lambda cnt : tuple(cnt[cnt[:,:,0].argmin()][0])[0])
+                    cnt = contours[0] # 优先取左边那个
+                    bottommost=tuple(cnt[cnt[:,:,1].argmax()][0]) # 计算最下点
+                    if bottommost[1] > 60 or n >=165:
+                        print(f'走了{n}步') # 限制在165步
+                        break
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+        
+        # 向左转向90
+        while np.abs(self.angle[-1]-90) > 1:
+            u = -0.05 * (self.angle[-1]-90)
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+        ns = itertools.repeat(0,1000)
+        for n in ns:
+            a = 0.02 * (75 - self.angle[-1])
+            self.setMoveCommand(vY=-1.0,vA=a)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+    
+        self.setMoveCommand(vX=0.0)
+        self.checkIfYaw(eps=10)
+        
+        # 通过这关
+        self.motors[19].setPosition(-0.2)
+        ns = itertools.count(0)
+        self.setMoveCommand(vX=1.)
+        for n in ns:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0 and  np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                # 若本关后接高障碍物，则进stage4()
+                if self.obstacleBehind:
+                    ob_x, ob_y = obstacleDetect(rgb_raw)
+                    if ob_y > 40:
+                        #print(ob_y)
+                        self.stage4()
+                # 若本关后无障碍物，则正常结束
+                elif self.materialInfo['material'] == '黄色砖块':
+                    if self.checkIfPassBrick(rgb_raw): break
+                else:
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = self.materialInfo['hsv']['low']
+                    high = self.materialInfo['hsv']['high']
+                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    if num < 250: break
+        
+        print("~~~~~~~~~~~窄门关结束~~~~~~~~~~~")
+        self.stageLeft.remove(9)
+        
+    # 过桥（成功率100%）
+    def stage5(self):
+        print("~~~~~~~~~~~窄桥关开始~~~~~~~~~~~")
+        self.motors[19].setPosition(-0.2)
         ns = itertools.count(0)
         for n in ns:
             if n % 5 == 0:
+                # img processing
                 rgb_raw = getImage(self.mCamera)
-                k = cornerTurn(rgb_raw)
-            if np.abs(k) < 0.1:
-                self.setMoveCommand(vA=0.0)
-                self.mGaitManager.step(self.mTimeStep)
-                self.myStep()
-                break
+                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask = cv2.inRange(hsv, np.array(low), np.array(high))
+                cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                if len(cnts)>0:
+                    try:
+                        cnt = max(cnts, key=cv2.contourArea)
+                        # 注意绿色不能太小，否则桥快到尽头；不能太大，否则进入到绿色回字
+                        if not 800 < cv2.contourArea(cnt) < 16000:
+                            print('调整结束')
+                            self.setMoveCommand(vX=0.0,vA=0.0)
+                            self.checkIfYaw()
+                            cv2.imwrite('log/keySteps/5窄桥调整结束图像.png',rgb_raw)
+                            cv2.imwrite('log/keySteps/5窄桥调整结束图像mask.png',mask)
+                            break
+                        M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                        center_x = int(M["m10"] / M["m00"])
+                        center_y = int(M["m01"] / M["m00"])
+                        mid_point = [center_x,center_y]
+                    except:
+                        pass
+                        #cv2.imwrite('mask.png',mask)
+                        #cv2.imwrite('rgb.png',rgb_raw)
+                else:
+                    mid_point = [80,60]
+            # 根据绿色质心灵活调整
+            if 60 < mid_point[0] < 70:
+                self.setMoveCommand(vX=0.8,vA=0.4)
+            elif 90 < mid_point[0] < 100:
+                self.setMoveCommand(vX=0.8,vA=-0.4)
+            elif mid_point[0] < 60:
+                self.setMoveCommand(vX=0.2,vA=0.8)
+            elif mid_point[0] > 100:
+                self.setMoveCommand(vX=0.2,vA=-0.8)
             else:
-                self.setMoveCommand(vA=1.0)
-                self.mGaitManager.step(self.mTimeStep)
-                self.myStep()
-
-        # 陀螺仪累计数据全部清空
-        self.angle = np.array([0., 0., 0.])
-        self.mMotionManager.playPage(9)
-        self.mGaitManager.start()
-        self.setRobotStop()
-        self.checkIfYaw()
-        self.mMotionManager.playPage(1)
-        self.mGaitManager.stop()
-        self.prepare(waitingTime=250)
-        self.passDoor()
-        print('########Stage4_End########')
-    
-    # Copy from yzc
-    def passDoor(self):
-        self.motors[19].setPosition(0.5)
-        ns = itertools.count(0)
-        turn_flag = 0
-        count=0
-        for n in ns:
-            action_flag = 0
-            if n%20==0:
-                rgb_raw = np.array(getImage(self.mCamera),dtype=np.uint8)
-                gs_frame = cv2.GaussianBlur(rgb_raw, (5, 5), 0) 
-                gray = cv2.cvtColor(gs_frame, cv2.COLOR_RGB2GRAY)
-                _, dst = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
-                dst=~dst
-                cnts = cv2.findContours(dst.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
-                
-                points =[]
-                if cnts:
-                    for cnt in cnts:
-                        rect = cv2.minAreaRect(cnt)
-                        box = cv2.boxPoints(rect)
-
-                        b = []
-                        for i in range(4):
-                            if box[i][1] >= 30:
-                                b.append(box[i])
-                        if b:
-                            if b[0][0]<=80:
-                                point = b[0] if b[0][0] > b[1][0] else b[1]
-                            else:
-                                point = b[1] if b[0][0] > b[1][0] else b[0]
-                            points.append(point)
-                        # cv2.circle(rgb_raw, (int(point[0]), int(point[1])), point_size, point_color1, thickness)
-                # cv2.imshow('img', rgb_raw)
-                # cv2.waitKey(0)
-                if len(points)==2:
-                    mid_x = (points[0][0]+points[1][0])/2
-                    mid_y = (points[0][1]+points[1][1])/2
-                    if turn_flag == 0:
-                        if mid_x < 75:
-                            self.turn_left(0.2)
-                            action_flag = 1
-                        if mid_x > 85:
-                            self.turn_right(0.2)
-                            action_flag = 1
-                        if mid_y >= 110 and turn_flag == 0:
-                            turn_flag = 1
-
-                if turn_flag == 1:
-                    count += 1
-                    if count == 600:
-                        break
-
-                if not action_flag:
-                    self.checkIfYaw()
-                    self.mGaitManager.setXAmplitude(0.8)  # 前进为0
-                    self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                    self.myStep()  # 仿真一个步长
+                self.setMoveCommand(vX=1.0,vA=0.0)
 
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
         
-    # 过桥
-    def stage5(self):
-        ball_color = 'green'
-        color_dist = {'red': {'Lower': np.array([0, 60, 60]), 'Upper': np.array([6, 255, 255])},
-                      'blue': {'Lower': np.array([100, 80, 46]), 'Upper': np.array([124, 255, 255])},
-                      'green': {'Lower': np.array([35, 43, 35]), 'Upper': np.array([90, 255, 255])},
-                      }
-        ns = itertools.count(1)
-        turn_flag = 0
-        count = 0
-        for n in ns:
-            action_flag = 0
-
-            if n % 20 == 0:
-                # img processing
-                rgb_raw = getImage(self.mCamera)
-                rgb_raw = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2RGB)
-                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
-                erode_hsv = cv2.erode(hsv, None, iterations=2)
-                inRange_hsv = cv2.inRange(erode_hsv, color_dist[ball_color]['Lower'], color_dist[ball_color]['Upper'])
-                cnts = cv2.findContours(inRange_hsv.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
-
-                if cnts:
-                    c = max(cnts, key=cv2.contourArea)
-                    rect = cv2.minAreaRect(c)
-                    box = cv2.boxPoints(rect)
-
-                    mid_point = np.mean(box, 0)
-
-                if turn_flag == 0:
-                    if mid_point[0] < 75:
-                        self.turn_left(0.2)
-                        action_flag = 1
-                    if mid_point[0] > 85:
-                        self.turn_right(0.2)
-                        action_flag = 1
-                    if mid_point[1] >= 110 and turn_flag == 0:
-                        turn_flag = 1
-
-                if turn_flag == 1:
-                    count += 1
-                    if count == 600:
-                        break
-
-                if not action_flag:
-                    self.mGaitManager.setXAmplitude(0.8)  # 前进为0
-                    self.mGaitManager.setAAmplitude(0.0)  # 转体为0
-                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                    self.myStep()  # 仿真一个步长
-
-    def turn_right(self, vel=0.3):
-        self.setMoveCommand(vA=-vel, vX=0., vY=0.)
-        self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-        self.myStep()
-
-    def turn_left(self, vel=0.3):
-        self.setMoveCommand(vA=vel, vX=0., vY=0.)
-        self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-        self.myStep()
-
-    # 踢球进洞
-    def stage6(self):
-        point_size = 1
-        point_color1 = (0, 0, 255)  # BGR
-        point_color2 = (0, 255, 0)
-        thickness = 4
-
-        print('########Stage6_Start########')
-        # self.mMotionManager.playPage(1)
-        yolonet_ball, yolodecoders_ball = load_yolo('./pretrain/6_ball.pth', class_names=['ball', 'hole'])
-        yolonet_hole, yolodecoders_hole = load_yolo('./pretrain/6_hole.pth', class_names=['ball', 'hole'])
-        self.setRobotRun(0.0)
-        self.setSideSpeed(1.0)
-        headPos = -0.1
-        self.motors[19].setPosition(headPos)
+        # 判断合适结束独木桥，此时必然已经调整结束。低头看路，注意绿色不能太小，否则桥快到尽头；不能太大，否则进入到绿色回字
         ns = itertools.count(0)
-        # flag
-        turn_flag = 0
-
         for n in ns:
-            action_flag = 0
-            if n % 2 == 0:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长        
+            if n % 5 == 0:
                 rgb_raw = getImage(self.mCamera)
-                rgb_raw = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2RGB)
-                res_ball = call_yolo(rgb_raw, yolonet_ball, yolodecoders_ball, class_names=['ball', 'hole'],
-                                     confidence=0.8)
-                res_hole = call_yolo(rgb_raw, yolonet_hole, yolodecoders_hole, class_names=['ball', 'hole'],
-                                     confidence=0.1)
-
-                if res_hole:
-                    for info in res_hole:
-                        top, left, down, right = info['bbox']
-                        center_hole_x, center_hole_y = (left + right) / 2, (top + down) / 2
-                        # print('hole',[center_hole_x, center_hole_y])
-                        hole_pos = [center_hole_x, center_hole_y]
-                    # cv2.circle(rgb_raw, (int(center_hole_x),int(center_hole_y)), point_size, point_color2, thickness)
-
-                ball_pos = []
-                if res_ball:
-                    for info in res_ball:
-                        top, left, down, right = info['bbox']
-                        center_ball_x, center_ball_y = (left + right) / 2, (top + down) / 2
-                        # print('ball',[center_ball_x, center_ball_y])
-                        ball_pos.append([center_ball_x, center_ball_y])
-
-                    if len(ball_pos) > 1:
-                        dis1 = np.linalg.norm(np.array(ball_pos[0]) - np.array(hole_pos))
-                        dis2 = np.linalg.norm(np.array(ball_pos[1]) - np.array(hole_pos))
-                        ball_pos = ball_pos[0] if dis1 >= dis2 else ball_pos[1]
-                    else:
-                        ball_pos = ball_pos[0]
-                # cv2.circle(rgb_raw, (int(ball_pos[0]),int(ball_pos[1])), point_size, point_color1, thickness)
-
-            # cv2.imshow('image', rgb_raw)
-            # cv2.waitKey(0)
-
-            if turn_flag == 0:
-                if ball_pos:
-                    print('ball_pos', ball_pos)
-                    if ball_pos[0] < 75:
-                        self.turn_left(0.2)
-                        action_flag = 1
-                    if ball_pos[0] > 85:
-                        self.turn_right(0.2)
-                        action_flag = 1
-                    if ball_pos[1] >= 90 and turn_flag == 0:
-                        turn_flag = 1
-
-            if turn_flag == 1:
-                if hole_pos:
-                    print('hole_pos', hole_pos)
-                if ball_pos:
-                    print('ball_pos', ball_pos)
-                if ball_pos and hole_pos:
-                    if ball_pos[0] < hole_pos[0] - 3:
-                        self.turn_right(0.2)
-                        action_flag = 1
-                    elif ball_pos[0] >= hole_pos[0] + 3:
-                        self.turn_left(0.2)
-                        action_flag = 1
-                    else:
-                        turn_flag = 3
-                elif hole_pos:
-                    if hole_pos[0] < 75:
-                        self.turn_left(0.2)
-                        action_flag = 1
-                    elif hole_pos[0] > 85:
-                        self.turn_right(0.2)
-                        action_flag = 1
-                    else:
-                        turn_flag = 2
-
-            if turn_flag == 2:
-                if ball_pos:
-                    print('ball_pos', ball_pos)
-                    if ball_pos[0] < 70:
-                        self.setMoveCommand(vY=0.5, vX=0., vA=0.)
-                        self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                        self.myStep()
-                        action_flag = 1
-                    elif ball_pos[0] > 80:
-                        self.setMoveCommand(vY=-0.5, vX=0., vA=0.)
-                        self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                        self.myStep()
-                        action_flag = 1
-                    else:
-                        turn_flag = 1
-                        print(turn_flag)
-                else:
-                    self.setMoveCommand(vY=0.5, vX=0., vA=0.)
-                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                    self.myStep()
-                    action_flag = 1
-
-            if turn_flag == 3:
-                self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
-                self.wait(2000)
-                stepMotion = Motion('motion/kick.motion')
-                stepMotion.setLoop(True)
-                stepMotion.play()
-                while not stepMotion.isOver():
-                    self.myStep()
-                print('########Stage6_End########')
-                self.setRobotStop()
-                self.mGaitManager.stop()
+                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[100:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                if num < 100 or num > 3000: # 大于3000代表走到了回字，视野底部基本全绿
+                    cv2.imwrite('log/keySteps/5窄桥判别通关图像.png',rgb_raw)
+                    cv2.imwrite('log/keySteps/5窄桥判别通关图像mask.png',mask)
+                    break
+        
+        # 通过后在往前一小段，防止站站在窄桥上开始下一关调整。但最后一关前不能这样。
+        print(self.stageLeft)
+        if len(self.stageLeft)> 2:
+            ns = itertools.repeat(0,250)
+            for n in ns:
+                u = -0.02 * (self.angle[-1])
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.,vA=u)
                 self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
                 self.myStep()  # 仿真一个步长
+        self.setMoveCommand(vX=0.)
+        self.checkIfYaw()
+        self.stageLeft.remove(5)
+        print("~~~~~~~~~~~窄桥关结束~~~~~~~~~~~")
 
-            if not action_flag:
-                self.setMoveCommand(vX=0.8)
+    # 踢球进洞（成功率70%）
+    def stage6(self):
+        print("~~~~~~~~~~~踢球关开始~~~~~~~~~~~")
+        # 三种情况，一种是洞在左前，一种洞在右前，一种洞在右后
+        # 右后是一种特殊情况，一定是出现在第二个转弯后，或者说踢球关出现在所有长形关顺序的最后一个（这样一定会被安排在第二个转弯之后）
+        if 3 not in self.stageLeft and 7 not in self.stageLeft and 9 not in self.stageLeft:
+            print('特殊情况，回身踢球')
+            self.motors[19].setPosition(-0.2)
+            while np.abs(self.angle[-1]-90) > 20:
+                u = -0.02 * (self.angle[-1]-90)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+            # 走到道路边缘
+            ns = itertools.count(0)
+            for n in ns:
+                u = -0.02 * (self.angle[-1]-90)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.,vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+                if n % 5 == 0:
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = self.materialInfo['hsv']['low']
+                    high = self.materialInfo['hsv']['high']
+                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    if num < 100:
+                        break
+            # 转180度
+            self.setMoveCommand(vX=0.)
+            while np.abs(self.angle[-1]-175) > 10:
+                u = -0.02 * (self.angle[-1]-175)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+
+            self.motors[18].setPosition(radians(45))
+            self.motors[19].setPosition(0.1)
+            # 向后倒车，直到洞和球垂直出现在视野中央
+            self.setMoveCommand(vX=-1.0,vY=0.,vA=0.)
+            ns = itertools.count(0)
+            for n in ns:
+                u = -0.02 * (self.angle[-1]-175)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=-1.,vA=u)
                 self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-                self.myStep()  # 仿真一个步
+                self.myStep()  # 仿真一个步长
+                if n % 5 == 0 and np.abs(self.angle[-1]-175)<1:
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = [95,115,0] #球和洞的hsv
+                    high = [255,255,50]
+                    mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                    contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                    ballHoleInfo = []
+                    for contour in contours:
+                        area = cv2.contourArea(contour)
+                        if area > 5:
+                            x,y,w,h = cv2.boundingRect(contour)
+                            ballHoleInfo.append({'center':(int(x+w/2),int(y+w/2)),'area':w*h})
+                    if len(ballHoleInfo)>=1 and 75 < ballHoleInfo[0]['center'][0] < 95 :
+                        cv2.imwrite('log/keySteps/6踢球进洞mask.png',mask)
+                        cv2.imwrite('log/keySteps/6踢球进洞rgb.png',rgb_raw)
+                        break
+                
+            # 向左转向45
+            self.motors[18].setPosition(0)
+            self.motors[19].setPosition(0.1)
+            while np.abs(self.angle[-1]-220) > 1:
+                u = -0.02 * (self.angle[-1]-220)
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+            
 
-    # 走楼梯
+            # 前进，好像直接能把球撞进去
+            ns = itertools.count(0)
+            bias = 0.
+            forwardFlag = False
+            for n in ns:
+                u = -0.02 * (self.angle[-1]-220)
+                u = np.clip(u, -1, 1)
+                if forwardFlag:
+                    self.setMoveCommand(vX=1.0,vY=0.0,vA=u)
+                else:
+                    self.setMoveCommand(vX=0.0,vY=0.05*bias,vA=u)
+                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                self.myStep()  # 仿真一个步长
+                # 配准球洞
+                if n % 5 == 0:
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = [95,115,0] #球和洞的hsv
+                    high = [255,255,50]
+                    mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                    contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                    if len(contours):
+                        # fix the bug : 有时候会除0
+                        try:
+                            cnt = max(contours, key=cv2.contourArea)
+                            M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                            center_x = int(M["m10"] / M["m00"])
+                            center_y = int(M["m01"] / M["m00"])
+                            #print(center_x)
+                        except:
+                            break
+                        bias = 90 - center_x
+                        if -2 < bias < 2:
+                            forwardFlag = True
+                        if center_y > 90:
+                            break
+                    else:
+                        bias = 0.
+            # 转身离去
+            print('踢球完毕')
+            self.setMoveCommand(vX=0.)
+            self.checkIfYaw(eps=10)
+          
+        # 如果不是右后，则按正常流程处理。
+        else:
+            # 先上下抬头，同时找到球和洞，并判定左右关系
+            ns = itertools.count(0)
+            self.setMoveCommand(vX=0.)
+            headPos = 0.5
+            self.motors[19].setPosition(headPos)
+            while not np.abs(self.positionSensors[19].getValue()-headPos) < 0.05:
+                u = -0.02 * (self.angle[-1])
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+            # 从0.5降到0.3，若还没有找到，则代表转弯之后离球太近，要往后退
+            backwardFlag = False
+            headPos = 0.35
+            self.motors[19].setPosition(headPos)
+            while True:
+                u = -0.02 * (self.angle[-1])
+                u = np.clip(u, -1, 1)
+                x = -1. if backwardFlag else 0.
+                self.setMoveCommand(vX=x,vA=u)
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                low = [95,115,0] #球和洞的hsv
+                high = [255,255,50]
+                mask = cv2.inRange(hsv, np.array(low), np.array(high))
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                ballHoleInfo = []
+                for contour in contours:
+                    area = cv2.contourArea(contour)
+                    if area > 5:
+                        x,y,w,h = cv2.boundingRect(contour)
+                        ballHoleInfo.append({'center':(int(x+w/2),int(y+w/2)),'area':w*h})
+                if len(ballHoleInfo) == 2:
+                    print(f'同时检测到球和洞时头部位置 ： {self.positionSensors[19].getValue()}')
+                    break #检测到球和洞
+
+                if np.abs(self.positionSensors[19].getValue()-headPos) < 0.05:
+                    backwardFlag = True      
+            
+            # 判定左右关系，用面积和中心
+            ballHoleInfo = sorted(ballHoleInfo,key= lambda x:x['area'])
+            if ballHoleInfo[0]['center'][0] < ballHoleInfo[1]['center'][0]:
+                case = 1
+                print('洞在右侧')
+            else:
+                case = 2
+                print('洞在左侧')
+        
+            # 若太远，先走一段。不要在上一关结束的地方直接转。
+            if ballHoleInfo[0]['center'][1] < 70:
+                ns = itertools.repeat(0,(400-ballHoleInfo[1]['center'][1]))
+                for n in ns:
+                    u = -0.02 * (self.angle[-1])
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vX=1.0,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+            else:
+                print('不可以先走一段')
+
+            # 若洞在右侧
+            if case == 1:
+                # 向左转向90
+                self.motors[19].setPosition(-0.15)
+                while np.abs(self.angle[-1]-90) > 20:
+                    u = -0.02 * (self.angle[-1]-90)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                # 走到道路边缘
+                ns = itertools.count(0)
+                for n in ns:
+                    u = -0.02 * (self.angle[-1]-90)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vX=1.,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                    if n % 5 == 0:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = self.materialInfo['hsv']['low']
+                        high = self.materialInfo['hsv']['high']
+                        mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                        road = np.where(mask==255)[0]
+                        num = len(road)
+                        if num < 100:
+                            break
+                        # if self.materialInfo['material'] =='白色' or self.materialInfo['material'] =='灰色' and self.turnCount == 1:
+                        #     cv2.imshow('image',mask)
+                        #     cv2.waitKey(0)
+                # 回正，侧头
+                self.setMoveCommand(vX=0.)
+                self.motors[18].setPosition(radians(-45))
+                self.motors[19].setPosition(0.1)
+                self.checkIfYaw(eps=10)
+
+                # 向前走，直到洞和球垂直出现在视野中央
+                ns = itertools.count(0)
+                for n in ns:
+                    u = -0.02 * (self.angle[-1])
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vX=1.,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+                    if n % 5 == 0 and np.abs(self.angle[-1])<5:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = [95,115,0] #球和洞的hsv
+                        high = [255,255,50]
+                        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                        ballHoleInfo = []
+                        for contour in contours:
+                            area = cv2.contourArea(contour)
+                            if area > 5:
+                                x,y,w,h = cv2.boundingRect(contour)
+                                ballHoleInfo.append({'center':(int(x+w/2),int(y+w/2)),'area':w*h})
+                            
+                        # if len(ballHoleInfo) >= 1:
+                        #     print(ballHoleInfo)
+                        if len(ballHoleInfo)>=1 and 75 < ballHoleInfo[0]['center'][0] < 95 :
+                            cv2.imwrite('log/keySteps/6踢球进洞mask.png',mask)
+                            cv2.imwrite('log/keySteps/6踢球进洞rgb.png',rgb_raw)
+                            break
+                    
+                # 向右转向45
+                self.motors[18].setPosition(0)
+                self.motors[19].setPosition(0.1)
+                while np.abs(self.angle[-1]+45) > 1:
+                    u = -0.02 * (self.angle[-1]+45)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                
+                # 前进，好像直接能把球撞进去
+                ns = itertools.count(0)
+                bias = 0.
+                forwardFlag = False
+                for n in ns:
+                    u = -0.02 * (self.angle[-1]+45)
+                    u = np.clip(u, -1, 1)
+                    if forwardFlag:
+                        self.setMoveCommand(vX=1.0,vY=0.0,vA=u)
+                    else:
+                        self.setMoveCommand(vX=0.0,vY=0.05*bias,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+                    # 配准球洞
+                    if n % 5 == 0:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = [95,115,0] #球和洞的hsv
+                        high = [255,255,50]
+                        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                        if len(contours):
+                            cnt = max(contours, key=cv2.contourArea)
+                            M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                            center_x = int(M["m10"] / M["m00"])
+                            center_y = int(M["m01"] / M["m00"])
+                            #print(center_x)
+                            bias = 70 - center_x
+                            if -2 < bias < 2:
+                                forwardFlag = True
+                            if center_y > 90:
+                                break
+                        else:
+                            bias = 0.
+                # 停下，踢球
+                # self.mGaitManager.stop()
+                # self.wait(200)
+                # self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
+                # kickMotion = Motion('motion/kick.motion')
+                # kickMotion.setLoop(False)
+                # kickMotion.play()
+                # while not kickMotion.isOver():
+                #     self.myStep()
+                
+                # 转身离去
+                print('踢球完毕')
+                self.setMoveCommand(vX=0.)
+                self.checkIfYaw(eps=10)
+                
+            
+            # 若洞在左侧
+            elif case == 2:
+                # 向右转向90
+                self.motors[19].setPosition(-0.15)
+                while np.abs(self.angle[-1]+90) > 20:
+                    u = -0.02 * (self.angle[-1]+90)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                # 走到道路边缘
+                ns = itertools.count(0)
+                for n in ns:
+                    u = -0.02 * (self.angle[-1]+90)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vX=1.,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                    if n % 5 == 0:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = self.materialInfo['hsv']['low']
+                        high = self.materialInfo['hsv']['high']
+                        mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                        road = np.where(mask==255)[0]
+                        num = len(road)
+                        if num < 100:
+                            break
+                # 回正，侧头
+                self.setMoveCommand(vX=0.)
+                self.motors[18].setPosition(radians(45))
+                self.motors[19].setPosition(0.1)
+                self.checkIfYaw(eps=10)
+
+                # 向前走，直到洞和球垂直出现在视野中央
+                ns = itertools.count(0)
+                for n in ns:
+                    u = -0.02 * (self.angle[-1])
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vX=1.,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+                    if n % 5 == 0 and np.abs(self.angle[-1])<5:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = [95,115,0] #球和洞的hsv
+                        high = [255,255,50]
+                        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                        ballHoleInfo = []
+                        for contour in contours:
+                            area = cv2.contourArea(contour)
+                            if area > 5:
+                                x,y,w,h = cv2.boundingRect(contour)
+                                ballHoleInfo.append({'center':(int(x+w/2),int(y+w/2)),'area':w*h})
+                        # if len(ballHoleInfo) >= 1:
+                        #     print(ballHoleInfo)
+                        if len(ballHoleInfo)>=1 and 65 < ballHoleInfo[0]['center'][0] < 85 :
+                            cv2.imwrite('log/keySteps/6踢球进洞mask.png',mask)
+                            cv2.imwrite('log/keySteps/6踢球进洞rgb.png',rgb_raw)
+                            break
+                    
+                # 向左转向45
+                self.motors[18].setPosition(0)
+                self.motors[19].setPosition(0.1)
+                while np.abs(self.angle[-1]-45) > 1:
+                    u = -0.02 * (self.angle[-1]-45)
+                    u = np.clip(u, -1, 1)
+                    self.setMoveCommand(vA=u)
+                    self.mGaitManager.step(self.mTimeStep)
+                    self.myStep()
+                
+                # 前进，好像直接能把球撞进去
+                ns = itertools.count(0)
+                bias = 0.
+                forwardFlag = False
+                for n in ns:
+                    u = -0.02 * (self.angle[-1]-45)
+                    u = np.clip(u, -1, 1)
+                    if forwardFlag:
+                        self.setMoveCommand(vX=1.0,vY=0.0,vA=u)
+                    else:
+                        self.setMoveCommand(vX=0.0,vY=0.05*bias,vA=u)
+                    self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                    self.myStep()  # 仿真一个步长
+                    # 配准球洞
+                    if n % 5 == 0:
+                        rgb_raw = getImage(self.mCamera)
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = [95,115,0] #球和洞的hsv
+                        high = [255,255,50]
+                        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+                        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3) # 闭运算：先膨胀后腐蚀，用来连接被误分为许多小块的对象
+                        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                        if len(contours):
+                            cnt = max(contours, key=cv2.contourArea)
+                            M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                            center_x = int(M["m10"] / M["m00"])
+                            center_y = int(M["m01"] / M["m00"])
+                            #print(center_x)
+                            bias = 90 - center_x
+                            if -2 < bias < 2:
+                                forwardFlag = True
+                            if center_y > 90:
+                                break
+                        else:
+                            bias = 0.
+                # 停下，踢球
+                # self.mGaitManager.stop()
+                # self.wait(200)
+                # self.mMotionManager.playPage(9)  # 执行动作组9号动作，初始化站立姿势，准备行走
+                # kickMotion = Motion('motion/kick.motion')
+                # kickMotion.setLoop(False)
+                # kickMotion.play()
+                # while not kickMotion.isOver():
+                #     self.myStep()
+                
+                # 转身离去
+                print('踢球完毕')
+                self.setMoveCommand(vX=0.)
+                self.checkIfYaw(eps=10)
+
+
+        # 踢球转身后，通过这关
+        self.motors[19].setPosition(-0.2)
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.,vA=u)
+            self.checkIfYaw()
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0:
+                rgb_raw = getImage(self.mCamera)
+                # 若本关后接高障碍物，则进stage4()
+                if self.obstacleBehind:
+                    ob_x, ob_y = obstacleDetect(rgb_raw)
+                    if ob_y > 40:
+                        #print(ob_y)
+                        self.stage4()
+                # 若本关后无障碍物，则正常结束
+                elif self.materialInfo['material'] == '黄色砖块':
+                    if self.checkIfPassBrick(rgb_raw): break
+                else:
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = self.materialInfo['hsv']['low']
+                    high = self.materialInfo['hsv']['high']
+                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    if num < 250: break
+        print("~~~~~~~~~~~踢球关结束~~~~~~~~~~~")
+        self.stageLeft.remove(6)
+        
+    # 走楼梯（成功率95%）
     def stage7(self):
-        print('########Stage7_Start########')
-        # 前面把南科大怼楼梯的动作加上就很稳了
+        print("~~~~~~~~~~~楼梯关开始~~~~~~~~~~~")
+        # 配准第一块蓝色的中心
+        self.motors[19].setPosition(-0.2)
+        mid_point = [80,60]
+        ns = itertools.count(0)
+        for n in ns:
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                # img processing
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                low = [100,110,150] # 第一块蓝色阶梯的hsv
+                high = [110,200,255]
+                mask = cv2.inRange(hsv, np.array(low), np.array(high))
+                cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                # fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+                # cv2.imwrite('./tmp/' + fname + '.png', rgb_raw)
+                if len(cnts)>0:
+                    cnt = max(cnts, key=cv2.contourArea)
+                    # 太小（太早看见）没什么意义
+                    if cv2.contourArea(cnt) < 1500:
+                        mid_point = [80,60]
+                    else:
+                        M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                        center_x = int(M["m10"] / M["m00"])
+                        center_y = int(M["m01"] / M["m00"])
+                        mid_point = [center_x,center_y]
+
+                        #蓝色轮廓最低点
+                        bottommost=tuple(cnt[cnt[:,:,1].argmax()][0])
+                        if bottommost[1] >= 118:
+                            self.setMoveCommand(vX=0.)
+                            self.checkIfYaw()
+                            if np.abs(self.angle[-1]) < 5:
+                                print('调整结束')
+                                break     
+                else:
+                    mid_point = [80,60]
+                # point_size = 1
+                # point_color = (0, 0, 255) # BGR
+                # thickness = 4 # 可以为 0 、4、8
+                # cv2.circle(rgb_raw, tuple(mid_point), point_size, point_color, thickness)
+                # cv2.imshow('image',rgb_raw)
+                # cv2.waitKey(0)
+            # 根据绿色质心灵活调整
+            if mid_point[0] < 75:
+                self.setMoveCommand(vX=0.2,vA=0.2)
+            elif mid_point[0] > 85:
+                self.setMoveCommand(vX=0.2,vA=-0.2)
+            else:
+                self.setMoveCommand(vX=0.8,vA=0.0)
+
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+
+        # 停下来，怼楼梯，反怼 南科大方案，待优化
+        self.mGaitManager.stop()
+        self.wait(200)
+        # ns = itertools.repeat(0,500)
+        # self.setMoveCommand(vX=0.0)
+        # for n in ns:
+        #     self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+        #     self.myStep()  # 仿真一个步长
+        #     if np.abs(self.angle[0]) < 0.5: break # 我发现，急停跌倒的原因是，钟摆很大时，突然让他停。应该等他回到中间位置，再停。
+        #self.mMotionManager.playPage(9)
+        stepMotion = Motion('motion/stair_duidui.motion')
+        stepMotion.setLoop(False)
+        for i in range(5):
+            stepMotion.play()
+            while not stepMotion.isOver():
+                self.myStep()
+        stepMotion = Motion('motion/stair_fandui.motion')
+        stepMotion.setLoop(False)
+        for i in range(2):
+            stepMotion.play()
+            while not stepMotion.isOver():
+                self.myStep()
+        
+        # 上楼梯
         stepMotion = Motion('motion/stair_up.motion')
         stepMotion.setLoop(False)
         stepMotion.play()
         while not stepMotion.isOver():
             self.myStep()
-        # 陀螺仪累计数据全部清空
-        self.angle = np.array([0., 0., 0.])
+
+        # 下楼梯，动作待优化
         stepMotion = Motion('motion/stair_down.motion')
         stepMotion.setLoop(False)
         stepMotion.play()
@@ -752,30 +1502,168 @@ class Walk():
         stepMotion.play()
         while not stepMotion.isOver():
             self.myStep()
-        print(self.angle[-1])
-        self.mGaitManager.start()
-        self.setForwardSpeed(0.0)
-        self.checkIfYaw(threshold=3.0)
-        self.setForwardSpeed(1.0)
-        ns = itertools.repeat(0, 700)
+        self.mMotionManager.playPage(9)
+        stepMotion = Motion('motion/stair_fandui.motion')
+        stepMotion.setLoop(False)
+        for i in range(6):
+            stepMotion.play()
+            while not stepMotion.isOver():
+                self.myStep()
+        self.angle = np.array([0., 0., 0.])
+
+        # 抬头看下一关，是不是还是黄色的
+        self.motors[19].setPosition(0.6)
+        ns = itertools.repeat(0, 200)
         for n in ns:
+            rgb_raw = getImage(self.mCamera)
+            if np.abs(self.positionSensors[19].getValue()-0.6)<0.05:
+                break
+        cv2.imwrite('log/keySteps/7楼梯上决策.png',rgb_raw)
+        hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+        low = self.materialInfo['hsv']['low']
+        high = self.materialInfo['hsv']['high']
+        mask = cv2.inRange(hsv,np.array(low),np.array(high))
+        road = np.where(mask==255)[0]
+        farest = np.where(road<5)[0]
+        #print(len(farest))
+        self.mGaitManager.start()
+        self.wait(200)
+        if len(farest) > 100:
+            print('接下来还是黄色路面')
+            # 写死冲一段
+            self.motors[19].setPosition(-0.2)
+            ns = itertools.repeat(0,800)
+            for n in ns:
+                u = -0.02 * (self.angle[-1])
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.0,vA=u)
+                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                self.myStep()  # 仿真一个步长
+        else:
+            # 用黄色结束来作为关卡结束的标志
+            print('接下来不是黄色路面')
+            low =  [0,180,205] # 大红
+            high = [255,255,255]
+            hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+            mask=cv2.inRange(hsv,np.array(low),np.array(high))
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(1,1))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel,iterations=3)
+            # 下最后一个红色坡,并结束这关
+            self.motors[19].setPosition(-0.2)
+            ns = itertools.count(0)
+            for n in ns:
+                u = -0.02 * (self.angle[-1])
+                u = np.clip(u, -1, 1)
+                self.setMoveCommand(vX=1.0,vA=u)
+                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                self.myStep()  # 仿真一个步长
+                if n > 100 and n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                    # img processing
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                    low = self.materialInfo['hsv']['low']
+                    high = self.materialInfo['hsv']['high']
+                    mask1=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high)) # 黄色mask
+                    low =  [0,180,205] # 大红
+                    high = [255,255,255]
+                    mask2=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high)) # 红色mask
+                    mask = cv2.bitwise_or(mask1, mask2)  #取并集
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    if num < 200:
+                        cv2.imwrite('log/keySteps/7楼梯关结束.png',rgb_raw)
+                        break
+        
+
+        self.setMoveCommand(vX=0.0)
+        for _ in range(20):
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
-        self.setRobotStop()
-        self.mGaitManager.stop()
-        print('########Stage7_End########')
 
-    # 上下开合横杆
+        self.mGaitManager.stop()
+        self.wait(200)
+        self.angle[0] = 0
+        self.angle[1] = 0
+        self.mGaitManager.start()
+        self.wait(200)
+        self.stageLeft.remove(7)
+        print("~~~~~~~~~~~楼梯关结束~~~~~~~~~~~")
+
+    # 水平开合横杆（成功率95%）
     def stage8(self):
-        print('########Stage8_Start########')
+        print("~~~~~~~~~~~水平横杆关开始~~~~~~~~~~~")
         stage8model = load_model('./pretrain/8.pth')
         crossBarCloseFlag = False
         goFlag = False
+        self.setMoveCommand(vX=0.0)
+        # 先看一下左右道路距离，若太偏则不能直接直走，会撞到杆子
+        self.motors[18].setPosition(radians(90))
+        self.motors[19].setPosition(-0.2)
+        while True:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=0.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[18].getValue()-radians(90))<0.05:
+                leftImg = getImage(self.mCamera)
+                lefthsv = cv2.cvtColor(leftImg,cv2.COLOR_BGR2HSV)
+                low = [10,0,125]
+                high = [167,80,175]
+                leftMask=cv2.inRange(lefthsv,np.array(low),np.array(high))
+                leftMask = cv2.medianBlur(leftMask,3)[10:,:]
+                if len(np.where(leftMask==255)[0]) > 50:
+                    leftValue = 110 - min(np.where(leftMask==255)[0])
+                else:
+                    leftValue = 1
+                break
+        self.motors[18].setPosition(radians(-90))
+        while True:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            self.checkIfYaw()
+            if np.abs(self.positionSensors[18].getValue()+radians(90))<0.05:
+                rightImg = getImage(self.mCamera)
+                low = [25,15,125]
+                high = [167,80,175]
+                righthsv = cv2.cvtColor(rightImg,cv2.COLOR_BGR2HSV)
+                rightMask=cv2.inRange(righthsv,np.array(low),np.array(high))
+                rightMask = cv2.medianBlur(rightMask,3)[10:,:]
+                if len(np.where(rightMask==255)[0]) > 50:
+                    rightValue = 110 - min(np.where(rightMask==255)[0])
+                else:
+                    rightValue = 1
+                break
+        ratio = leftValue / (leftValue + rightValue)
+        cv2.imwrite('log/keySteps/8左视角rgb.png',leftImg)
+        cv2.imwrite('log/keySteps/8左视角mask.png',leftMask)
+        cv2.imwrite('log/keySteps/8右视角rgb.png',rightImg)
+        cv2.imwrite('log/keySteps/8右视角mask.png',rightMask)
+        # cv2.imshow('left',leftMask)
+        # cv2.imshow('right',rightMask)
+        # cv2.waitKey(0)
+
+        # 视角回正
+        self.motors[18].setPosition(radians(0))
+        self.motors[19].setPosition(0.35)
+        while True:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=0.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[18].getValue())<0.05:
+                break
+        # 分类网络判别
         ns = itertools.count(0)
         for n in ns:
-            self.checkIfYaw()
-            if n % 100 == 0:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=0.0,vA=u)
+            if n % 100 == 0 and np.abs(self.positionSensors[19].getValue()-0.35)<0.05:
                 rgb_raw = getImage(self.mCamera)
+                fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+                cv2.imwrite('./log/last/' + fname + '.png', rgb_raw)
                 pred, prob = call_classifier(rgb_raw, stage8model)
                 if not crossBarCloseFlag:
                     if pred == 1:
@@ -784,61 +1672,562 @@ class Walk():
                     else:
                         print('Wait for CrossBar Close with probablity %.3f ...' % prob)
                 else:
-                    if pred == 0:
+                    if pred == 0 and prob > 0.85:
                         goFlag = True
                         print('CrossBar already Open with probablity %.3f, Go Go Go!' % prob)
                     else:
                         print('Wait for CrossBar Open with probablity %.3f ...' % prob)
             if goFlag:
-                self.mGaitManager.start()
-                self.setRobotRun()
+                cv2.imwrite('log/keySteps/8可通行.png',rgb_raw)
                 break
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
             self.myStep()  # 仿真一个步长
-        n0 = n
-        for n in ns:
-            self.checkIfYaw()
-            # 持续走一段时间，写死了这里
-            if (n - n0) >= 1000:
-                break
-            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
-            self.myStep()  # 仿真一个步长
+        
         del stage8model
-        print('########Stage8_End########')
+
+        # 走完最后一关
+        self.motors[19].setPosition(-0.2)
+        # 如果太边缘了，需要转回来一点
+        print(f'第八关预调整,ratio = {ratio}')
+        if ratio < 0.35:
+            direction = -25
+        elif ratio > 0.65:
+            direction = 25
+        else:
+            direction = 0
+        while(np.abs(self.angle[-1]-direction)>0.5):
+            u = -0.02 * (self.angle[-1]-direction)
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+
+        # 快速通过
+        self.motors[19].setPosition(0)
+        ns = itertools.count(0)
+        for n in ns:
+            # 调角速度，保持垂直。这里没有用checkIfYaw，虽然功能相同，但是后者占用的mystep没有计数。
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue())<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                # 判定关卡结束条件，当前材料的hsv基本消失在视野中下段。或者行进步数超限1000。
+                if num < 500 or n > 1500:
+                    break
+        self.stageLeft.remove(8)
+        print("~~~~~~~~~~~水平横杆关结束~~~~~~~~~~~")
+
+    '''
+    下面是不同关卡之间的连贯
+    '''
+    def whereAmI(self,img):
+        # 判定当前我在哪种花色的地面上
+        hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+        maxNum = 0
+        currentInfo = {}
+        for info in raceTrackInfo:
+            low = info['hsv']['low']
+            high = info['hsv']['high']
+            mask=cv2.inRange(hsv,np.array(low),np.array(high))
+            road = np.where(mask==255)[0]
+            num = len(road)
+            if num > maxNum:
+                currentInfo = info
+                maxNum = num
+        return currentInfo
+    
+    def checkIfCorner(self,MaterialInfo,judgeCorner=True):
+        if not judgeCorner or self.turnCount==2:
+            return False
+        # 抬头看，长形是不是够长，如果只有一块的长度（正常长形占两块），则代表要转弯了；
+        self.motors[19].setPosition(0.5)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 1000)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()-0.5)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                break
+        low = MaterialInfo['hsv']['low']
+        high = MaterialInfo['hsv']['high']
+        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,iterations=3)
+        contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+
+        # 找面积最大的轮廓
+        area = [cv2.contourArea(contour) for contour in contours]
+        idxSorted = np.argsort(np.array(area))
+        points = contours[idxSorted[-1]].reshape(-1,2)
+        x_min,y_min = np.min(points,axis=0)
+        # 若轮廓上界在视野下方，则判断不是完整长形，要转弯
+        if y_min > 50:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/corner/' + fname + '.png', rgb_raw)
+            return True
+        else:
+            return False
+    
+    def checkIfObstacle(self,MaterialInfo):
+        # 抬头看，视野里是否有蓝白，有则代表这关结束后有蓝色障碍物
+        self.motors[19].setPosition(0.5)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 150)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()-0.5)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                break
+        low =  [110,250,0]
+        high = [130,255,255]
+        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(1,1))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel,iterations=3)
+        contours, hierarchy = cv2.findContours(mask[:,40:-40],cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        #cv2.imwrite('rgb.png', rgb_raw)
+        #cv2.imwrite('mask.png', mask)
+        if len(contours) >= 2:
+            return True
+        else:
+            return False
+
+    def checkIfTrap(self,MaterialInfo):
+        # 抬头看，主要区分绿色是回字还是窄桥。根据绿色面积，不知道稳定否
+        self.motors[19].setPosition(0.1)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 150)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()-0.1)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                break
+        low = MaterialInfo['hsv']['low']
+        high = MaterialInfo['hsv']['high']
+        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv,np.array(low),np.array(high))
+        contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        area = [cv2.contourArea(contour) for contour in contours]
+        print( max(area))
+        if max(area) > 13500:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/trap/' + fname + '.png', rgb_raw)
+            return True
+        else:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/bridge/' + fname + '.png', rgb_raw)
+            return False
+
+    def checkIfStairs(self,MaterialInfo):
+        # 抬头看，视野里是否有大红，大红是最后一级台阶的颜色，而且只出现在楼梯上
+        self.motors[19].setPosition(0.5)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 150)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()-0.5)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                break
+        # pred, prob = call_classifier(rgb_raw, self.stage_classifier)
+        # print(pred,prob)
+        low =  [0,180,205] # 大红
+        high = [255,255,255]
+        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(1,1))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel,iterations=3)
+        contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        num = 0
+        # 不要用len(contours)，原因是可能有噪点。
+        for cnt in contours:
+            if cv2.contourArea(cnt) > 20:
+                num += 1
+        if num >= 2:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/stairs/' + fname + '.png', rgb_raw)
+            return True
+        else:
+            return False
+        
+    def checkMineOrDoorOrBall(self,MaterialInfo):
+        # 抬头看，视野里是否有很多黑色小块
+        self.motors[19].setPosition(0.5)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 150)
+        for n in ns:
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()-0.5)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                break
+        # pred, prob = call_classifier(rgb_raw, self.stage_classifier)
+        # print(pred,prob)
+        # 注意判断黑色不是直接检测黑色，而是把不属于黑色的都去掉，再取反。
+        low =  [0,0,10]
+        high = [255,255,255]
+        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+        mask=cv2.inRange(hsv,np.array(low),np.array(high))
+        mask = 255 - mask
+        contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        
+        blackNums = 0
+        blackAreaMax = 0
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if  area > 5:
+                blackNums += 1
+                if area > blackAreaMax and tuple(contour[contour[:,:,1].argmin()][0])[1]< 60:
+                    blackAreaMax = area
+        # cv2.imwrite('rgb.png',rgb_raw)
+        # cv2.imwrite('mask.png',mask)
+        if blackNums >= 3 and blackAreaMax < 60 and 3 in self.stageLeft:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/mine/' + fname + '.png', rgb_raw)
+            return 3 # 地雷关对应编号3
+        elif blackAreaMax >= 125 and 9 in self.stageLeft:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/door/' + fname + '.png', rgb_raw)
+            return 9 # 门对应编号9
+        else:
+            fname = time.strftime("%Y-%m-%d-%H_%M_%S",time.localtime(time.time())) 
+            cv2.imwrite('./log/ball/' + fname + '.png', rgb_raw)
+            return 6 # 踢球对应编号6
+
+    # 通过关卡X并判定何时结束
+    def passStageX(self,X=1,MaterialInfo=None,maxStep=np.inf,stopAfterFinish=True):
+        '''
+        X表示关卡序号:
+        # 1 上下开合横杆 2 回字陷阱 3 地雷路段 4 翻越障碍
+        # 5 窄桥 6 踢球 7 楼梯 8 水平开合横杆 9 窄门
+
+        MaterialInfo表示当前路段材料信息:
+        # {'material':'材料名','possible_stage':[可能关卡列表],'hsv':{'low':[hsv下界列表],'high':[hsv上界列表]}}
+
+        maxStep表示最大步数，防止视觉判断错误之后会永远走下去
+
+        stopAfterFinish:
+        如果设置为True，则判定完成stageX后会停下，并等1s，实际比赛中不需要
+        '''
+        #如果是回字或独木桥或地雷或楼梯，直接pass了，因为策略有通关判别条件
+        if self.stageNow in [2,3,5,7]:
+            pass
+        else:
+            self.motors[19].setPosition(-0.2)
+            # 重复50个空循环等待电机到位
+            ns = itertools.repeat(0, 50)
+            for n in ns:
+                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                self.myStep()  # 仿真一个步长
+
+            if not MaterialInfo:
+                rgb_raw = getImage(self.mCamera)
+                MaterialInfo = self.whereAmI(rgb_raw)
+                print(MaterialInfo)
+
+            ns = itertools.count(0)
+            self.setMoveCommand(vX=1.)
+            for n in ns:
+                self.checkIfYaw()
+                self.mGaitManager.step(self.mTimeStep)
+                self.myStep()
+                if n % 5 == 0 and np.abs(self.angle[0]) < 1.0:
+                    rgb_raw = getImage(self.mCamera)
+                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                    low = MaterialInfo['hsv']['low']
+                    high = MaterialInfo['hsv']['high']
+                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                    road = np.where(mask==255)[0]
+                    num = len(road)
+                    # cv2.imshow('image',mask)
+                    # cv2.waitKey(0)
+                    #cv2.imwrite('tmp/'+str(n)+'.png',rgb_raw)
+                    #cv2.imwrite('tmp/'+str(n)+'_1.png',mask)
+                    # 判定关卡结束条件，当前材料的hsv基本消失在视野中下段。或者行进步数超限。
+                    if self.materialInfo['material'] == '黄色砖块':
+                        brickAreaMean = brickArea(rgb_raw)
+                        print(brickAreaMean)
+                    if num < 500 or n > maxStep:
+                        break
+        if stopAfterFinish:
+            self.setMoveCommand(vX=0.)
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+            self.checkIfYaw()
+        stageLast = stageInfo[X]['name']
+        print(f'已经通过关卡{stageLast}')
+    
+    # 判定下一关是哪一关
+    def judgeNextStage(self,judgeCorner=True):
+        # 返回结果储存在res字典中，只有判断是长形关卡（地雷、楼梯、门、踢球）时，turn_flag和obstacle_flag才生效
+        # 因为转90度只有可能发生在长形地形处，高障碍物只有可能跟在长形地形后
+        res = {'stage_num':-1,'turn_flag':False,'obstacle_flag':False}
+        self.motors[19].setPosition(-0.2)
+        # 重复50个空循环等待电机到位
+        ns = itertools.repeat(0, 1000)
+        for n in ns:
+            rgb_raw = getImage(self.mCamera)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if np.abs(self.positionSensors[19].getValue()+0.2)<0.05:  
+                break
+        MaterialInfo = self.whereAmI(rgb_raw)
+        self.materialInfo = MaterialInfo
+        # 绿色材料的地面可能是独木桥或回字陷阱
+        if MaterialInfo['material'] == '绿色':
+            if (self.checkIfTrap(MaterialInfo) and 2 in self.stageLeft) or 5 not in self.stageLeft:
+                self.stageNow = 2
+            else:
+                self.stageNow = 5
+            res['stage_num'] = self.stageNow
+        # 这三种材料的地面会随机出现在 门、踢球和地雷关，即长形地形，其中黄色还会引导楼梯
+        elif MaterialInfo['material'] == '黄色砖块':
+            if self.checkIfStairs(MaterialInfo) and 7 in self.stageLeft: 
+                self.stageNow = 7
+            else:
+                if self.checkIfCorner(MaterialInfo,judgeCorner):
+                    res['turn_flag'] = True
+                    print('要转弯啦')
+                else:
+                    # 不然只能在 门、踢球和地雷关 中出
+                    self.stageNow =  self.checkMineOrDoorOrBall(MaterialInfo)
+                    # 注意这三关后面都可能跟蓝色障碍物
+                    if self.checkIfObstacle(MaterialInfo):
+                        res['obstacle_flag'] = True
+                        print('这关结束有蓝色障碍物哦')
+        elif MaterialInfo['material'] == '灰色' or MaterialInfo['material'] == '白色' :
+            if self.checkIfCorner(MaterialInfo,judgeCorner):
+                res['turn_flag'] = True
+                print('要转弯啦')
+            else:
+                # 不然只能在 门、踢球和地雷关 中出
+                self.stageNow =  self.checkMineOrDoorOrBall(MaterialInfo)
+                # 注意这三关后面都可能跟蓝色障碍物
+                if self.checkIfObstacle(MaterialInfo):
+                    res['obstacle_flag'] = True
+                    print('这关结束有蓝色障碍物哦')
+        # 草地和蓝色碎花只可能对应一种关卡
+        else:
+            self.stageNow = MaterialInfo['possible_stage'][0]
+            res['stage_num'] = self.stageNow
+        
+        nextStageName = stageInfo[self.stageNow]['name']
+        print(f'当前关卡:{nextStageName},当前地面材料:{self.materialInfo}')
+        return res
+
+    # 左转90度，进入下一个方向的比赛
+    def turn90(self):
+        print("~~~~~~~~~~~准备转弯~~~~~~~~~~~")
+        # fix the bug : 转弯过程中撞到雷
+        # 先看一眼路前面是不是有雷，是的话稍微往右靠靠再转
+        if 3 in self.stageLeft:
+            self.setMoveCommand(vX=0.0)
+            self.motors[19].setPosition(-0.2)
+            while np.abs(self.positionSensors[19].getValue()+0.2)>0.05:
+                self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+                self.myStep()  # 仿真一个步长
+                if self.positionSensors[19].getValue() > 0: continue
+                rgb_raw = getImage(self.mCamera)
+                low =  [0,0,15]
+                high = [255,255,255]
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                mask=cv2.inRange(hsv,np.array(low),np.array(high))
+                mask = 255 - mask
+                contours, hierarchy = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                dilei = []
+                for contour in contours:
+                    if cv2.contourArea(contour) > 5:
+                        M = cv2.moments(contour)  # 计算第一条轮廓的各阶矩,字典形式
+                        center_x = int(M["m10"] / M["m00"])
+                        center_y = int(M["m01"] / M["m00"])
+                        if 20 < center_x < 120:
+                            dilei.append((center_x,center_y))
+                if len(dilei):
+                    while np.abs(self.angle[-1]+45) > 1:
+                        u = -0.02 * (self.angle[-1]+45)
+                        u = np.clip(u, -1, 1)
+                        self.setMoveCommand(vX=0.5,vA=u)
+                        self.mGaitManager.step(self.mTimeStep)
+                        self.myStep()
+                    cv2.imwrite('log/keySteps/转弯抬头望雷.png',rgb_raw)
+                    break # 已经调整完，跳出
+            if not len(dilei): print('无雷，可以安全转弯')
+        
+        # 正常转弯程序
+        self.motors[19].setPosition(0.2)
+        ns = itertools.count(0)
+        for n in ns:
+            u = -0.02 * (self.angle[-1])
+            u = np.clip(u, -1, 1)
+            self.setMoveCommand(vX=1.0,vA=u)
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()-0.2)<0.05:
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                road = np.where(mask==255)[0]
+                num = len(road)
+                if num < 500:
+                    break
+        print("~~~~~~~~~~~开始转弯~~~~~~~~~~~")
+        self.setMoveCommand(vX=0.0)
+        # for _ in range(50):
+        #     self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+        #     self.myStep()  # 仿真一个步长
+        # self.mGaitManager.stop()
+        # self.wait(200)
+        self.angle[-1] -= 87.5
+        # self.angle[0]=0
+        # self.angle[1]=0
+        #self.mGaitManager.start()
+        #self.wait(200)
+        self.checkIfYaw()
+        # self.mGaitManager.stop()
+        # self.wait(200)
+        # self.angle[0]=0
+        # self.angle[1]=0
+        # self.mGaitManager.start()
+        # self.wait(500)
+        self.turnCount += 1
+        print("~~~~~~~~~~~转弯结束~~~~~~~~~~~")
+             
+    # 判断是否通过黄色砖块路面。不能单纯用颜色，有可能下关直接跟楼梯
+    def checkIfPassBrick(self,rgb_raw):
+        # 如果楼梯已经走完，则直接用黄色消失做判据即可
+        if 7 not in self.stageLeft:
+            hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+            low = raceTrackInfo[2]['hsv']['low'] # 黄色砖块
+            high = raceTrackInfo[2]['hsv']['high']
+            mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+            road = np.where(mask==255)[0]
+            num = len(road)
+            return True if num < 250 else False
+        
+        # 如果楼梯还没走，那么下一关是有可能接小黄砖引导的楼梯关卡的
+        # 因此判据是 1）黄色消失 or 2）出现很多小黄砖
+        else:
+            hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+            low = raceTrackInfo[2]['hsv']['low'] # 黄色砖块
+            high = raceTrackInfo[2]['hsv']['high']
+            mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+            road = np.where(mask==255)[0]
+            num = len(road)
+            flag1 =  True if num < 250 else False
+            if self.turnCount ==0:
+                # 第一次转弯之前，光线的原因，会让影子遮住部分小砖块
+                flag2 = True if calculateBrickNum(rgb_raw) > 9 else False
+            else:
+                flag2 = True if calculateBrickNum(rgb_raw) > 15 else False
+
+            if flag1 or flag2:
+                return True
+
+    def stop(self):
+        self.setMoveCommand(vX=0.)
+        for _ in range(50):
+            self.mGaitManager.step(self.mTimeStep)
+            self.myStep()
+        self.mGaitManager.stop()
+        self.wait(200)
 
     # 主函数循环
     def run(self):
         # 准备动作
-        self.prepare(waitingTime=500)
+        self.prepare()
+        # ##############################键盘采数据####################################
+        # # self.motors[19].setPosition(0.25)
+        # # self.keyBoardControl()
+        # # ##############################完成通关程序############################################
+        strategies = {
+            1 : self.stage1,
+            2 : self.stage2,
+            3 : self.stage3,
+            4 : self.stage4,
+            5 : self.stage5,
+            6 : self.stage6,
+            7 : self.stage7,
+            8 : self.stage8,
+            9 : self.stage9,
+        }
+        while len(self.stageLeft):
+            strategies[self.stageNow]()
+            res = self.judgeNextStage()
+            if res['turn_flag'] == True:
+                self.turn90()
+                res = self.judgeNextStage(judgeCorner=False)
+            self.obstacleBehind = 0 #res['obstacle_flag']
+        ##########################################################################
+        #单独测试任意一关，注意一定要把机器人挪动到上一关未完成处哦
+        # self.stageLeft = {6,8}
+        # strategies = {
+        #     1 : self.stage1,
+        #     2 : self.stage2,
+        #     3 : self.stage3,
+        #     4 : self.stage4,
+        #     5 : self.stage5,
+        #     6 : self.stage6,
+        #     7 : self.stage7,
+        #     8 : self.stage8,
+        #     9 : self.stage9,
+        # }
+        # self.passStageX(self.stageNow)
+        # res = self.judgeNextStage()
+        # if res['turn_flag'] == True:
+        #     self.turn90()
+        #     res = self.judgeNextStage(judgeCorner=False)
+        # self.obstacleBehind = res['obstacle_flag']
+        # strategies[self.stageNow]()
+        # #self.passStageX(self.stageNow,self.materialInfo)
+        # res = self.judgeNextStage()
+        # if res['turn_flag'] == True:
+        #     self.turn90()
+        #     res = self.judgeNextStage(judgeCorner=False)
+        ##########################################################################
         # 通过第一关	上下开横杆
         # self.stage1()
         # 通过第二关	回字陷阱
         # self.stage2()
         # 通过第三关	地雷路段
-        # self.stage3()
+        #self.materialInfo = {'material':'灰色','possible_stage':[3,9,6],'hsv':{'low':[35,0,150],'high':[40,20,255]}}
+        #self.stage3()
         # 通过第四关	翻越障碍与过门
-        self.stage4()
+        #self.stage4()
         # self.prepare(waitingTime=500)
-        # self.passDoor()
+        # self.stage9()
         # 通过第五关	窄桥路段
         # self.stage5()
         # 通过第六关	踢球进洞
+        # self.stageLeft = {6,8}
+        # self.materialInfo = {'material':'白色','possible_stage':[3,9,6],'hsv':{'low':[10, 5, 200],'high':[30, 30, 255]}}
         # self.stage6()
         # 通过第七关	走楼梯
+        # self.materialInfo = {'material':'黄色砖块','possible_stage':[3,9,7,6],'hsv':{'low':[15,100,50],'high':[34,255,255]}}
         # self.stage7()
-        # 通过第八关	水平开横杆
+        # # 通过第八关	水平开横杆
+        # self.materialInfo = {'material':'蓝色碎花','possible_stage':[8],'hsv':{'low':[100, 10, 100],'high':[150, 80, 200]}}
         # self.stage8()
-        # 键盘控制与采集数据
-        # self.keyBoardControl(collet_data=0,rotation=1)
 
         # 停下
-        self.mMotionManager.playPage(1)
-        self.mGaitManager.stop()
-
+        self.stop()
         while True:
-            # self.checkIfYaw(threshold=3.0)
-            self.mGaitManager.step(self.mTimeStep)
-            self.myStep()
+            self.mMotionManager.playPage(24)
+        
 
 
 if __name__ == '__main__':
