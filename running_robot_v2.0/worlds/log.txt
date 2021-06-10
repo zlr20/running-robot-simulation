@@ -1,0 +1,39 @@
+
+2021-06-10 21:33:10
+参赛队伍名称：THU-bot
+webots大赛比赛得分：150
+比赛用时：200.07s
+比赛场地方块顺序：[0, 2, 3, 4, 1, 5]
+关卡所在方块：[1, 4, 2, 4]
+地雷坐标：[[-0.09, 0.266, -0.4], [-0.1, 0.266, 0.08], [0.15, 0.266, 0.4], [0.11, 0.266, -0.15], [-0.29, 0.266, -0.16], [-0.28, 0.266, 0.33]]
+ver: 2.0
+00:03-passed the barrier +10
+00:20-passed the trap +10
+00:40-passed the ball field +0
+00:58-passed the bridge +20
+01:28-passed the door +10
+01:51-passed the obstacle +20
+02:20-passed the mine field +20
+02:54-passed the peak +20
+03:13-passed the step +20
+03:20-passed the double barrier +20
+
+2021-06-10 21:34:08
+参赛队伍名称：THU-bot
+webots大赛比赛得分：170
+比赛用时：200.29s
+比赛场地方块顺序：[5, 0, 4, 2, 1, 3]
+关卡所在方块：[4, 2, 1, 2]
+地雷坐标：[[0.27, 0.266, -0.02], [-0.16, 0.266, 0.01], [-0.2, 0.266, 0.34], [0.2, 0.266, 0.38], [0.04, 0.266, -0.44], [-0.28, 0.266, -0.28]]
+ver: 2.0
+00:02-passed the barrier +10
+00:29-passed the peak +20
+00:42-passed the step +20
+00:58-passed the trap +10
+01:28-passed the mine field +20
+01:58-passed the door +10
+02:22-passed the obstacle +20
+02:47-scored a goal!
+02:54-passed the ball field +20
+03:13-passed the bridge +20
+03:20-passed the double barrier +20

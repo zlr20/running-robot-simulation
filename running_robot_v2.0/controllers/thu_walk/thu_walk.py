@@ -30,7 +30,7 @@ raceTrackInfo = [
     {'material':'灰色','possible_stage':[3,9,6],'hsv':{'low':[35,0,150],'high':[40,20,255]}},
     {'material':'黄色砖块','possible_stage':[3,9,7,6],'hsv':{'low':[15,100,50],'high':[34,255,255]}}, # 楼梯前也是砖块
     {'material':'绿色','possible_stage':[2,5],'hsv':{'low':[35, 43, 35],'high':[90, 255, 255]}},
-    {'material':'白色','possible_stage':[3,9,6],'hsv':{'low':[10, 5, 200],'high':[30, 30, 255]}},
+    {'material':'白色','possible_stage':[3,9,6],'hsv':{'low':[10, 5, 200],'high':[25, 30, 255]}},
     {'material':'蓝色碎花','possible_stage':[8],'hsv':{'low':[100, 10, 100],'high':[150, 80, 200]}},
 ]
 
@@ -102,15 +102,20 @@ class Walk():
 
         # 剩余关卡
         self.stageLeft = {1,2,3,5,6,7,8,9}
+        # 已经通过关卡
+        self.stagePass = []
         # 当前关卡，默认第一关
         self.stageNow = 1
+        # 这关转弯
+        self.cornerAlready = False
         # 这关之后有蓝色障碍物
-        self.obstacleBehind = 0
+        self.obstacleBehind = False
         # 当前道路材料，默认草地
         self.materialInfo = {'material':'草地','possible_stage':[1],'hsv':{'low':[20,100,100],'high':[55,200,200]}}
         # 已经转弯的次数
         self.turnCount = 0
 
+        self.hshhCount = 0
 
     # 执行一个仿真步，同时每步更新机器人RPY角度
     def myStep(self):
@@ -612,6 +617,7 @@ class Walk():
                             print('停止避雷行走，原因是达到上限')
 
         self.stageLeft.remove(3)
+        print("~~~~~~~~~~~地雷关结束~~~~~~~~~~~")
         
     # 翻越障碍(跨越式)
     def stage4(self):
@@ -627,7 +633,7 @@ class Walk():
                 ob_x, ob_y = obstacleDetect(rgb_raw)
                 if ob_y > 0:
                     self.setMoveCommand(vX=0.5,vA=u)
-                if ob_y > 80:  # 蓝色障碍物出现在正确位置，跳出循环，准备空翻
+                if ob_y > 90:  # 蓝色障碍物出现在正确位置，跳出循环，准备空翻
                     self.setMoveCommand(vX=0.,vA=u)
                     break
             self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
@@ -804,6 +810,46 @@ class Walk():
     def stage5(self):
         print("~~~~~~~~~~~窄桥关开始~~~~~~~~~~~")
         self.motors[19].setPosition(-0.2)
+        # 先看一下是不是太太太靠边了
+        ns = itertools.count(0)
+        self.setMoveCommand(vX=0.0)
+        for n in ns:
+            if n % 5 == 0 and np.abs(self.positionSensors[19].getValue()+0.2)<0.05:
+                # img processing
+                rgb_raw = getImage(self.mCamera)
+                hsv = cv2.cvtColor(rgb_raw, cv2.COLOR_BGR2HSV)
+                low = self.materialInfo['hsv']['low']
+                high = self.materialInfo['hsv']['high']
+                mask = cv2.inRange(hsv, np.array(low), np.array(high))
+                cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                if len(cnts)>0:
+                    try:
+                        cnt = max(cnts, key=cv2.contourArea)
+                        M = cv2.moments(cnt)  # 计算第一条轮廓的各阶矩,字典形式
+                        center_x = int(M["m10"] / M["m00"])
+                        center_y = int(M["m01"] / M["m00"])
+                        mid_point = [center_x,center_y]
+                    except:
+                        pass
+                        #cv2.imwrite('mask.png',mask)
+                        #cv2.imwrite('rgb.png',rgb_raw)
+                else:
+                    mid_point = [-1,60]
+                # 根据绿色质心灵活调整
+                if 35 <= mid_point[0] <= 125:
+                    self.setMoveCommand(vX=1.0)
+                    break
+                elif  0 <= mid_point[0] < 35:
+                    self.setMoveCommand(vX=0.0,vY=1.0)
+                elif 125 < mid_point[0] <= 160 :
+                    self.setMoveCommand(vX=0.0,vY=-1.0)
+                else:
+                    self.setMoveCommand(vX=-1.0)
+                print(mid_point[0])
+            self.mGaitManager.step(self.mTimeStep)  # 步态生成器生成一个步长的动作
+            self.myStep()  # 仿真一个步长
+        
+        # 正常配准
         ns = itertools.count(0)
         for n in ns:
             if n % 5 == 0:
@@ -886,7 +932,7 @@ class Walk():
         self.stageLeft.remove(5)
         print("~~~~~~~~~~~窄桥关结束~~~~~~~~~~~")
 
-    # 踢球进洞（成功率70%）
+    # 踢球进洞（成功率75%）
     def stage6(self):
         print("~~~~~~~~~~~踢球关开始~~~~~~~~~~~")
         # 三种情况，一种是洞在左前，一种洞在右前，一种洞在右后
@@ -910,14 +956,18 @@ class Walk():
                 self.myStep()
                 if n % 5 == 0:
                     rgb_raw = getImage(self.mCamera)
-                    hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
-                    low = self.materialInfo['hsv']['low']
-                    high = self.materialInfo['hsv']['high']
-                    mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
-                    road = np.where(mask==255)[0]
-                    num = len(road)
-                    if num < 100:
+                    # 所谓的回身黄黄
+                    if self.checkIfHSHH(rgb_raw):
                         break
+                    else:
+                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                        low = self.materialInfo['hsv']['low']
+                        high = self.materialInfo['hsv']['high']
+                        mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                        road = np.where(mask==255)[0]
+                        num = len(road)
+                        if num < 100:
+                            break
             # 转180度
             self.setMoveCommand(vX=0.)
             while np.abs(self.angle[-1]-175) > 10:
@@ -1100,14 +1150,19 @@ class Walk():
                     self.myStep()
                     if n % 5 == 0:
                         rgb_raw = getImage(self.mCamera)
-                        hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
-                        low = self.materialInfo['hsv']['low']
-                        high = self.materialInfo['hsv']['high']
-                        mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
-                        road = np.where(mask==255)[0]
-                        num = len(road)
-                        if num < 100:
+                        # 所谓的回身黄黄
+                        if self.checkIfHSHH(rgb_raw): 
                             break
+                        else:
+                            hsv = cv2.cvtColor(rgb_raw,cv2.COLOR_BGR2HSV)
+                            
+                            low = self.materialInfo['hsv']['low']
+                            high = self.materialInfo['hsv']['high']
+                            mask=cv2.inRange(hsv[self.mCameraHeight//2:,:],np.array(low),np.array(high))
+                            road = np.where(mask==255)[0]
+                            num = len(road)
+                            if num < 100:
+                                break
                         # if self.materialInfo['material'] =='白色' or self.materialInfo['material'] =='灰色' and self.turnCount == 1:
                         #     cv2.imshow('image',mask)
                         #     cv2.waitKey(0)
@@ -1407,7 +1462,7 @@ class Walk():
 
         if midX < 65:
             direction = 60
-        elif midX > 95:
+        elif midX > 90:
             direction = -60
         else:
             direction = 0
@@ -2108,6 +2163,21 @@ class Walk():
             if flag1 or flag2:
                 return True
 
+    # 踢球向边缘走的时候，这一关是黄色地砖，上一关是楼梯，也是黄色地砖，而且一定是出现在转弯处。回身黄黄
+    def checkIfHSHH(self,rgb_raw):
+        # 不是黄砖，或上一关不是楼梯，或不在这关转过弯，不可能回身黄黄
+        if self.materialInfo['material'] != '黄色砖块' or self.stagePass[-1]!=7 or not self.cornerAlready:
+            return False
+        else:
+            count = calculateBrickNum(rgb_raw)
+            print(f'进入回身黄黄判别程序,小砖块数{count}')
+            if count >= 6 or self.hshhCount >= 45:
+                return True
+            else:
+                self.hshhCount += 1
+                return False
+    
+    
     def stop(self):
         self.setMoveCommand(vX=0.)
         for _ in range(50):
@@ -2121,8 +2191,8 @@ class Walk():
         # 准备动作
         self.prepare()
         # ##############################键盘采数据####################################
-        # # self.motors[19].setPosition(0.25)
-        # # self.keyBoardControl()
+        # self.motors[19].setPosition(-0.2)
+        # self.keyBoardControl()
         # # ##############################完成通关程序############################################
         strategies = {
             1 : self.stage1,
@@ -2137,12 +2207,14 @@ class Walk():
         }
         while len(self.stageLeft):
             strategies[self.stageNow]()
+            self.stagePass.append(self.stageNow)
+            print(self.stagePass)
             res = self.judgeNextStage()
-            if res['turn_flag'] == True:
+            self.cornerAlready = res['turn_flag']
+            if self.cornerAlready:
                 self.turn90()
                 res = self.judgeNextStage(judgeCorner=False)
             self.obstacleBehind = res['obstacle_flag']
-            print(self.obstacleBehind)
         ##########################################################################
         #单独测试任意一关，注意一定要把机器人挪动到上一关未完成处哦
         # self.stageLeft = {6,8}
@@ -2182,6 +2254,7 @@ class Walk():
         # self.prepare(waitingTime=500)
         # self.stage9()
         # 通过第五关	窄桥路段
+        # self.materialInfo =  {'material':'绿色','possible_stage':[2,5],'hsv':{'low':[35, 43, 35],'high':[90, 255, 255]}}
         # self.stage5()
         # 通过第六关	踢球进洞
         # self.stageLeft = {6,8}
